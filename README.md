@@ -437,6 +437,113 @@ Weitere Beispiele enthält [`docs/styleguide.md`](docs/styleguide.md).
 
 ## Authentifizierung und Sicherheit
 
+<details>
+<summary><strong>ELI5: Wie funktioniert der Autorisierungsprozess?</strong></summary>
+
+AutoDocBot passiert zwei voneinander getrennte Türsteher:
+
+1. **Microsoft Entra prüft:** „Wer benutzt gerade den Copilot-Agenten?“
+2. **Atlassian prüft:** „Darf AutoDocBot für diese Person in Confluence
+   arbeiten?“
+
+Stell dir AutoDocBot als Assistenten in einem Bürogebäude vor. Dein
+Microsoft-Ausweis bringt dich in das Büro von AutoDocBot. Dein
+Atlassian-Ausweis erlaubt AutoDocBot anschließend, in deinem Namen in
+Confluence zu arbeiten. AutoDocBot erhält dabei keine Passwörter, sondern
+technische Zutrittskarten – die OAuth-Tokens.
+
+### 1. Copilot weist den Benutzer gegenüber AutoDocBot aus
+
+Der Benutzer ist im Copilot bereits mit seinem Microsoft-Konto angemeldet.
+Copilot erhält von Microsoft Entra ein Access Token für die AutoDocBot-API und
+sendet es bei jedem MCP-Aufruf mit. Der MCP-Server prüft unter anderem:
+
+- Stammt das Token wirklich vom konfigurierten Entra-Tenant?
+- Ist es für die AutoDocBot-API bestimmt und noch gültig?
+- Besitzt es den erforderlichen delegierten Scope?
+- Welcher Benutzer und welche erlaubte Client-Anwendung stecken dahinter?
+
+Damit kennt AutoDocBot die stabile Microsoft-Benutzeridentität, ohne ein
+Microsoft-Passwort zu erhalten.
+
+### 2. AutoDocBot prüft die Confluence-Verbindung
+
+Der Agent ruft `get_confluence_connection` auf. Der MCP-Server sucht im
+verschlüsselten Token Store nach einer Atlassian-Verbindung für genau diese
+Microsoft-Benutzeridentität. Existiert noch keine Verbindung, erzeugt er einen
+kurzzeitig gültigen, signierten Autorisierungslink. Dieser Link ist an den
+aktuellen Benutzer gebunden.
+
+### 3. Der Benutzer stimmt bei Atlassian zu
+
+Der Link führt direkt zu Atlassian. Dort meldet sich der Benutzer an und sieht,
+welche Berechtigungen AutoDocBot anfordert, beispielsweise Confluence-Spaces und
+Seiten lesen sowie Seiten und Diagramm-Anhänge erstellen. Das
+Atlassian-Passwort bleibt vollständig bei Atlassian und ist für AutoDocBot nie
+sichtbar.
+
+### 4. Atlassian gibt AutoDocBot einen einmaligen Code
+
+Nach der Zustimmung leitet Atlassian den Browser zum registrierten Callback
+zurück:
+
+```text
+/oauth/callback?code=...
+```
+
+Dieser Code ist ein einmalig einlösbarer Abholschein. Der MCP-Server tauscht ihn
+bei Atlassian gegen ein Access Token und – durch `offline_access` – ein Refresh
+Token. Zusätzlich ermittelt AutoDocBot die autorisierte Site, Cloud-ID,
+Benutzeridentität und verfügbaren Confluence-Spaces.
+
+### 5. Beide Identitäten werden sicher miteinander verknüpft
+
+AutoDocBot speichert sinngemäß folgende Zuordnung:
+
+```text
+Microsoft-Benutzer
+→ dessen Atlassian-Verbindung
+→ autorisierte Site und Spaces
+→ verschlüsselte OAuth-Tokens
+```
+
+Jeder Microsoft-Benutzer besitzt dadurch eine eigene Atlassian-Verbindung. Die
+Tokens werden nicht an Copilot zurückgegeben und nicht in Git gespeichert. Sie
+liegen verschlüsselt im persistenten `/data`-Token-Store.
+
+### 6. Veröffentlichung im Namen des Benutzers
+
+Nach der ausdrücklichen Bestätigung einer Vorschau bestimmt der MCP-Server über
+das Entra-Token erneut den aktuellen Benutzer. Er lädt ausschließlich dessen
+Atlassian-Verbindung und ruft damit die Confluence API auf. Deshalb erscheint
+der verbundene Atlassian-Benutzer als Autor und nicht ein allgemeiner
+Bot-Account.
+
+Läuft das kurzlebige Access Token ab, verwendet AutoDocBot das verschlüsselte
+Refresh Token, um ein neues anzufordern. Eine erneute Anmeldung ist erst nötig,
+wenn die Verbindung widerrufen oder ungültig wurde beziehungsweise die
+Berechtigungen nicht mehr ausreichen.
+
+### Drei getrennte Sicherheitsentscheidungen
+
+```text
+Microsoft Entra
+„Wer spricht mit AutoDocBot?“
+
+Atlassian OAuth
+„Was darf AutoDocBot für diese Person in Confluence tun?“
+
+Veröffentlichungsbestätigung
+„Soll genau diese Vorschau jetzt wirklich veröffentlicht werden?“
+```
+
+Der Entra Admin Consent und die Atlassian-Zustimmung sind nicht dasselbe: Der
+Admin Consent erlaubt den Zugriff auf die AutoDocBot-API. Die individuelle
+Atlassian-Zustimmung erlaubt AutoDocBot anschließend die Confluence-Arbeit im
+Namen des jeweiligen Benutzers.
+
+</details>
+
 ### Lokaler Modus
 
 `AUTH_MODE=local` ist ausschließlich für Entwicklung gedacht. Ohne Header verwendet der Server `LOCAL_USER_ID`; über `x-autodoc-user-id` kann der Testclient eine andere lokale Identität simulieren. Dieser Modus darf nicht offen im Internet betrieben werden.
