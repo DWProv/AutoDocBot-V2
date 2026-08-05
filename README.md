@@ -2,7 +2,7 @@
 
 AutoDocBot V2 ist ein End-to-End-verifizierter Proof of Concept für einen Copilot-Agenten, der frei formulierte Prozessbeschreibungen in konsistente Confluence-Prozessartikel umwandelt. Der Agent strukturiert den Inhalt, wendet einen verbindlichen und zugleich anpassbaren Styleguide an, erzeugt ein SVG-Prozessdiagramm und veröffentlicht den bestätigten Artikel über einen MCP-Server im Namen des angemeldeten Atlassian-Benutzers.
 
-> Aktueller Stand: Version `0.1.3`. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, Copilot Studio, semantische Vorprüfung, verschlüsselte Benutzerverbindungen, Azure Container Apps sowie die bestätigte Veröffentlichung eines Artikels mit SVG-Diagramm wurden praktisch verifiziert.
+> Aktueller Stand: Version `0.1.4`. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, Copilot Studio, semantische Vorprüfung, automatische Strukturreparatur, verschlüsselte Benutzerverbindungen, Azure Container Apps sowie die bestätigte Veröffentlichung eines Artikels mit SVG-Diagramm wurden praktisch verifiziert.
 
 ## Inhaltsverzeichnis
 
@@ -350,6 +350,13 @@ previewCreated: false
 
 Es wird keine `previewId` erzeugt. Der Agent stellt die gelieferten fachlichen Fragen und ruft das Tool erst mit einem durch die Benutzerantworten bereinigten ProzessText erneut auf. Diese deterministische Vorprüfung ergänzt die Modellbewertung; sie ist keine vollständige allgemeine Widerspruchserkennung.
 
+Ist der konsolidierte Prozess fachlich eindeutig, aber `articleJson` noch
+unvollständig, antwortet das Tool nicht mit einem technischen Fehler. Stattdessen
+liefert es `article_structure_retry_required`, konkrete `validationIssues` und
+`requiredArticleShape`. Der Agent repariert die Struktur intern und wiederholt
+den Vorschauaufruf sofort; der Benutzer wird nicht nach Schema- oder
+Pflichtfeldern gefragt.
+
 Ein verkürztes Beispiel:
 
 ```json
@@ -530,8 +537,8 @@ MCP-Server liefert die zentralen Regeln zusätzlich als MCP-Serveranweisungen au
 ### Docker lokal
 
 ```bash
-docker build -t autodocbot-v2:0.1.3 .
-docker run --rm -p 3000:3000 --env-file .env autodocbot-v2:0.1.3
+docker build -t autodocbot-v2:0.1.4 .
+docker run --rm -p 3000:3000 --env-file .env autodocbot-v2:0.1.4
 ```
 
 Das Multi-Stage-Dockerfile kompiliert TypeScript im Build-Image und übernimmt nur Produktionsabhängigkeiten sowie `dist/` in das Runtime-Image. Der Prozess läuft als unprivilegierter Benutzer `node`.
@@ -559,7 +566,7 @@ az acr create -g "$RG" -n "$ACR" --sku Basic --admin-enabled false
 az storage account create -g "$RG" -n "$STORAGE" -l "$LOCATION" --sku Standard_LRS --min-tls-version TLS1_2
 az storage share-rm create -g "$RG" --storage-account "$STORAGE" --name autodocbot-tokenstore --quota 1
 az containerapp env create -g "$RG" -n "$ENVIRONMENT" -l "$LOCATION"
-az acr build -r "$ACR" -t autodocbot-v2:0.1.3 .
+az acr build -r "$ACR" -t autodocbot-v2:0.1.4 .
 ```
 
 Danach wird der File Share im Container-Apps-Environment registriert:
@@ -579,7 +586,7 @@ az containerapp env storage set \
 
 Die Container App benötigt anschließend:
 
-- Image `<ACR>.azurecr.io/autodocbot-v2:0.1.3`
+- Image `<ACR>.azurecr.io/autodocbot-v2:0.1.4`
 - externe Ingress-Regel, Zielport `3000`
 - `AUTH_MODE=entra`
 - alle Entra- und Atlassian-Werte aus der Konfigurationstabelle

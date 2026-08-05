@@ -4,7 +4,7 @@ import { onboardingSampleSpec } from "../article/sample-process.js";
 
 const client = new Client({
   name: "autodocbot-local-test-client",
-  version: "0.1.3",
+  version: "0.1.4",
 });
 
 const transport = new StreamableHTTPClientTransport(
@@ -58,6 +58,38 @@ try {
   });
   if (preview.isError) {
     throw new Error("Vorschau-Tool ist fehlgeschlagen.");
+  }
+
+  const structureRetry = await client.callTool({
+    name: "preview_process_article",
+    arguments: {
+      sourceText:
+        "HR meldet den Eintritt fünf Arbeitstage vorher. Dennis erstellt anschließend das Benutzerkonto.",
+      articleJson: JSON.stringify({ title: "Hardware Onboarding" }),
+      qualityReviewJson: JSON.stringify({
+        contradictions: [],
+        missingResponsibilities: [],
+        openQuestions: [],
+        assumptions: [],
+      }),
+    },
+  });
+  const structureRetryOutput = structureRetry.structuredContent as
+    | {
+        status?: string;
+        previewId?: string;
+        validationIssues?: unknown[];
+        requiredArticleShape?: unknown;
+      }
+    | undefined;
+  if (
+    structureRetry.isError ||
+    structureRetryOutput?.status !== "article_structure_retry_required" ||
+    structureRetryOutput.previewId ||
+    !structureRetryOutput.validationIssues?.length ||
+    !structureRetryOutput.requiredArticleShape
+  ) {
+    throw new Error("Eine unvollständige Artikelstruktur löst keinen internen Reparaturauftrag aus.");
   }
 
   const clarification = await client.callTool({

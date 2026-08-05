@@ -7,7 +7,7 @@ import {
 } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { z } from "zod";
+import { z, ZodError } from "zod";
 import {
   validateArticleSpec,
   type ArticleSpec,
@@ -155,10 +155,69 @@ const mcpAgentInstructions = [
   "Rufe get_article_styleguide ab und wende den gelieferten Styleguide auf jeden Artikel an.",
   "Leite Rollen, Prozessschritte, Entscheidungen, Ausnahmen und insbesondere die Anzahl der Schritte selbst aus dem Benutzertext ab. Frage niemals nach einer gewünschten Schrittzahl oder nach technischen Schemafeldern.",
   "Prüfe den konsolidierten ProzessText vor jeder Vorschau auf Widersprüche, fehlende Verantwortlichkeiten, offene Fragen und unbelegte Annahmen. Übergib diese Prüfung vollständig als qualityReviewJson.",
-  "Wenn preview_process_article clarification_required zurückgibt, stelle die gelieferten fachlichen Fragen. Erzeuge erst nach den Antworten einen widerspruchsfreien konsolidierten sourceText und einen neuen Qualitätsbericht. Erfinde keine Fakten.",
+  "Wenn preview_process_article clarification_required zurückgibt, stelle die gelieferten fachlichen Fragen. Erzeuge nach den Antworten einen widerspruchsfreien konsolidierten sourceText, baue das vollständige ArticleSpec neu auf und rufe preview_process_article selbstständig erneut auf. Erfinde keine Fakten.",
+  "Wenn preview_process_article article_structure_retry_required zurückgibt, korrigiere articleJson anhand der validationIssues und requiredArticleShape und rufe dasselbe Tool sofort erneut auf. Das ist ein interner Reparaturschritt: Berichte dem Benutzer nicht über Pflichtfelder und frage ihn nicht nach technischen Strukturangaben.",
   "Erzeuge mit preview_process_article immer zuerst eine Vorschau und zeige dem Benutzer die wesentlichen Inhalte und die Diagrammrichtung.",
   "Rufe publish_process_article ausschließlich auf, nachdem der Benutzer die konkrete aktuelle Vorschau ausdrücklich bestätigt hat. Eine allgemeine Bitte, einen Artikel zu erstellen, ist noch keine Veröffentlichungsbestätigung.",
 ].join("\n");
+
+const requiredArticleShape = {
+  title: "string (5-140 Zeichen)",
+  summary: "string (10-600 Zeichen)",
+  purpose: "string (10-2000 Zeichen)",
+  scope: "string (5-2000 Zeichen)",
+  roles: [
+    {
+      name: "string (Rolle)",
+      responsibility: "string (Verantwortung der Rolle)",
+    },
+  ],
+  prerequisites: ["string (optional; sonst leeres Array)"],
+  steps: [
+    {
+      number: "integer; lückenlos ab 1",
+      actor: "string (ausführende Rolle)",
+      action: "string (eine Hauptaktion)",
+      result: "string (Ergebnis der Aktion)",
+      decision: "string (optional)",
+    },
+  ],
+  exceptions: [
+    {
+      condition: "string",
+      handling: "string",
+    },
+  ],
+  relatedLinks: [],
+  metadata: {
+    owner: "string (optional)",
+    department: "string (optional)",
+    reviewDate: "YYYY-MM-DD (optional)",
+  },
+  optionalContent: {},
+  style: {
+    tone: "formal | neutral | concise | friendly (optional)",
+    audience: "general | expert | management | operations (optional)",
+    detailLevel: "compact | standard | detailed (optional)",
+    addressForm: "neutral | du | sie (optional)",
+    diagramDirection: "top-down | left-right (optional)",
+  },
+};
+
+function articleStructureRetry(validationIssues: Array<{ path: string; message: string }>) {
+  const output = {
+    status: "article_structure_retry_required",
+    previewCreated: false,
+    validationIssues,
+    requiredArticleShape,
+    nextAction:
+      "Repariere articleJson jetzt selbstständig anhand des konsolidierten sourceText, der validationIssues und requiredArticleShape. Fülle redaktionelle Felder wie summary, purpose, scope und result aus den bereits vorliegenden Fakten. Erfinde keine neuen fachlichen Fakten. Rufe preview_process_article anschließend sofort erneut auf. Antworte dem Benutzer vor diesem Wiederholungsaufruf nicht und frage niemals nach JSON-, Schema- oder Pflichtfeldern.",
+  };
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(output, null, 2) }],
+    structuredContent: output,
+  };
+}
 const tokenEncryptionKey = loadOrCreateEncryptionKey({
   encodedKey: process.env.TOKEN_ENCRYPTION_KEY || undefined,
   localKeyPath: ".local/token-encryption.key",
@@ -683,7 +742,7 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
   const mcp = new McpServer(
     {
       name: "autodocbot-v2",
-      version: "0.1.3",
+      version: "0.1.4",
     },
     { instructions: mcpAgentInstructions },
   );
@@ -759,6 +818,11 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
         },
         enforcedRules: baseStyleGuide.enforcedRules,
         agentInstructions: buildAgentStyleInstructions(baseStyleGuide),
+        articleSpecContract: {
+          instruction:
+            "Erzeuge articleJson bei jedem Vorschauversuch vollständig in dieser Form. Redaktionelle Felder werden aus dem konsolidierten Prozess abgeleitet und nicht beim Benutzer abgefragt.",
+          requiredArticleShape,
+        },
       };
       return {
         content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
@@ -772,13 +836,13 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
     {
       title: "Prozessartikel als Vorschau erzeugen",
       description:
-        "Prüft den konsolidierten Benutzertext und einen obligatorischen Qualitätsbericht auf Widersprüche, fehlende Verantwortlichkeiten, offene Fragen und unbelegte Annahmen. Solange Probleme bestehen, liefert das Tool clarification_required und keine Vorschau-ID. Nur ein widerspruchsfreier Prozess wird als ArticleSpec validiert und als 30 Minuten gültige Vorschau gespeichert. Das Tool veröffentlicht niemals in Confluence. Leite die Schrittzahl selbst ab und frage niemals nach technischen Schemafeldern.",
+        "Prüft den konsolidierten Benutzertext und einen obligatorischen Qualitätsbericht auf Widersprüche, fehlende Verantwortlichkeiten, offene Fragen und unbelegte Annahmen. Solange Probleme bestehen, liefert das Tool clarification_required und keine Vorschau-ID. Nach Benutzerantworten muss ein vollständiges ArticleSpec neu aufgebaut und das Tool selbstständig erneut aufgerufen werden. Bei article_structure_retry_required reparierst du articleJson intern und wiederholst den Aufruf sofort, ohne dem Benutzer technische Pflichtfelder zu melden. Das Tool veröffentlicht niemals in Confluence.",
       inputSchema: {
         sourceText: z.string().min(20).max(30_000).describe(
           "Aktueller konsolidierter fachlicher ProzessText. Beim ersten Aufruf entspricht er dem Benutzereingangstext. Nach Rückfragen enthält er die bestätigten Antworten und keine überholten widersprüchlichen Aussagen.",
         ),
         articleJson: z.string().min(2).max(100_000).describe(
-          "Vollständiges ArticleSpec als JSON-kodierter String. Extrahiere die Prozessschritte selbst aus dem Benutzertext und nummeriere sie lückenlos ab 1. Erfinde keine Fakten. Frage nicht nach der Anzahl der Schritte.",
+          "Vollständiges ArticleSpec als JSON-kodierter String. Pflichtfelder: title, summary, purpose, scope, roles mit name und responsibility sowie steps mit number, actor, action und result. Nummeriere Schritte lückenlos ab 1. Verwende für prerequisites, exceptions und relatedLinks leere Arrays, falls nichts beschrieben ist. metadata und optionalContent dürfen leere Objekte sein. Leite redaktionelle Inhalte selbst aus sourceText ab; frage nie nach Strukturfeldern oder Schrittzahl.",
         ),
         qualityReviewJson: z.string().min(2).max(50_000).describe(
           "Obligatorischer JSON-kodierter Qualitätsbericht mit exakt den Arrays contradictions, missingResponsibilities, openQuestions und assumptions. Jeder Eintrag hat finding und question. Nutze leere Arrays nur, wenn der konsolidierte Text in der jeweiligen Kategorie wirklich eindeutig ist. Beispiel: {\"contradictions\":[],\"missingResponsibilities\":[],\"openQuestions\":[],\"assumptions\":[]}.",
@@ -814,9 +878,31 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
         try {
           article = JSON.parse(articleJson);
         } catch {
-          throw new Error("articleJson muss ein gültiger JSON-String sein.");
+          return articleStructureRetry([
+            {
+              path: "articleJson",
+              message: "Der Wert ist kein gültiger JSON-String.",
+            },
+          ]);
         }
-        const spec = validateArticleSpec(article);
+        let spec: ArticleSpec;
+        try {
+          spec = validateArticleSpec(article);
+        } catch (error) {
+          const validationIssues =
+            error instanceof ZodError
+              ? error.issues.map((issue) => ({
+                  path: issue.path.length > 0 ? issue.path.join(".") : "articleJson",
+                  message: issue.message,
+                }))
+              : [
+                  {
+                    path: "articleJson",
+                    message: error instanceof Error ? error.message : String(error),
+                  },
+                ];
+          return articleStructureRetry(validationIssues);
+        }
         const { previewId, style, expiresAt } = storeArticlePreview(
           spec,
           identity.userId,
@@ -1237,7 +1323,7 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
         JSON.stringify({
           status: "ok",
           service: "autodocbot-v2",
-          version: "0.1.3",
+          version: "0.1.4",
           authMode: config.authMode,
         }),
       );
