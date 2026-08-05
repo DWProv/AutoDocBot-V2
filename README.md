@@ -282,7 +282,7 @@ Der Streamable-HTTP-Endpunkt befindet sich unter `/mcp` und akzeptiert `POST`.
 |---|---:|---|
 | `get_confluence_connection` | nein | prüft die Benutzerverbindung und liefert erlaubte Spaces oder einen signierten Atlassian-Verknüpfungslink |
 | `get_article_styleguide` | nein | liefert Standardstil, erlaubte Anpassungen, feste Regeln und Agentenanweisungen |
-| `preview_process_article` | nein | validiert ein `ArticleSpec`, rendert Diagramm-Metadaten und erzeugt eine 30 Minuten gültige Vorschau-ID |
+| `preview_process_article` | nein | validiert ein als JSON-String übergebenes `ArticleSpec`, rendert Diagramm-Metadaten und erzeugt eine 30 Minuten gültige Vorschau-ID |
 | `publish_process_article` | ja | veröffentlicht genau eine bestätigte Vorschau inklusive SVG-Diagramm |
 
 ### Vorgesehene Tool-Reihenfolge
@@ -299,7 +299,7 @@ Der Agent darf `publish_process_article` nicht automatisch direkt nach der Vorsc
 
 ## ArticleSpec und Styleguide
 
-Der Copilot erzeugt keinen fertigen HTML-Artikel. Stattdessen sendet er strukturierte Daten an den MCP-Server. Das verhindert, dass Benutzertext ungeprüft als Confluence-Markup ausgeführt wird.
+Der Copilot erzeugt keinen fertigen HTML-Artikel. Stattdessen serialisiert er strukturierte Daten als JSON-String im Feld `articleJson`. Der MCP-Server parst und validiert diesen String als `ArticleSpec`. Das flache Tool-Eingabefeld umgeht bekannte Schemaeinschränkungen in Copilot Studio, ohne die serverseitige Validierung aufzuweichen, und verhindert, dass Benutzertext ungeprüft als Confluence-Markup ausgeführt wird.
 
 Ein verkürztes Beispiel:
 
@@ -486,8 +486,8 @@ confirmed=true an publish_process_article.
 ### Docker lokal
 
 ```bash
-docker build -t autodocbot-v2:0.1.0 .
-docker run --rm -p 3000:3000 --env-file .env autodocbot-v2:0.1.0
+docker build -t autodocbot-v2:0.1.1 .
+docker run --rm -p 3000:3000 --env-file .env autodocbot-v2:0.1.1
 ```
 
 Das Multi-Stage-Dockerfile kompiliert TypeScript im Build-Image und übernimmt nur Produktionsabhängigkeiten sowie `dist/` in das Runtime-Image. Der Prozess läuft als unprivilegierter Benutzer `node`.
@@ -515,7 +515,7 @@ az acr create -g "$RG" -n "$ACR" --sku Basic --admin-enabled false
 az storage account create -g "$RG" -n "$STORAGE" -l "$LOCATION" --sku Standard_LRS --min-tls-version TLS1_2
 az storage share-rm create -g "$RG" --storage-account "$STORAGE" --name autodocbot-tokenstore --quota 1
 az containerapp env create -g "$RG" -n "$ENVIRONMENT" -l "$LOCATION"
-az acr build -r "$ACR" -t autodocbot-v2:0.1.0 .
+az acr build -r "$ACR" -t autodocbot-v2:0.1.1 .
 ```
 
 Danach wird der File Share im Container-Apps-Environment registriert:
@@ -535,7 +535,7 @@ az containerapp env storage set \
 
 Die Container App benötigt anschließend:
 
-- Image `<ACR>.azurecr.io/autodocbot-v2:0.1.0`
+- Image `<ACR>.azurecr.io/autodocbot-v2:0.1.1`
 - externe Ingress-Regel, Zielport `3000`
 - `AUTH_MODE=entra`
 - alle Entra- und Atlassian-Werte aus der Konfigurationstabelle

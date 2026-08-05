@@ -4,7 +4,7 @@ import { onboardingSampleSpec } from "../article/sample-process.js";
 
 const client = new Client({
   name: "autodocbot-local-test-client",
-  version: "0.1.0",
+  version: "0.1.1",
 });
 
 const transport = new StreamableHTTPClientTransport(
@@ -40,7 +40,7 @@ try {
 
   const preview = await client.callTool({
     name: "preview_process_article",
-    arguments: { article: onboardingSampleSpec() },
+    arguments: { articleJson: JSON.stringify(onboardingSampleSpec()) },
   });
   if (preview.isError) {
     throw new Error("Vorschau-Tool ist fehlgeschlagen.");

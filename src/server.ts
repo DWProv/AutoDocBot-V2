@@ -669,7 +669,7 @@ async function publishArticle(
 function createPublicationMcpServer(identity: McpIdentity): McpServer {
   const mcp = new McpServer({
     name: "autodocbot-v2",
-    version: "0.1.0",
+    version: "0.1.1",
   });
 
   mcp.registerTool(
@@ -756,15 +756,21 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
     {
       title: "Prozessartikel als Vorschau erzeugen",
       description:
-        "Validiert einen strukturierten Prozessartikel, wendet den Styleguide an und erzeugt eine 30 Minuten gültige Vorschau-ID samt Diagramm-Metadaten. Dieses Tool veröffentlicht niemals in Confluence. Fehlende Fakten müssen vor dem Aufruf beim Benutzer erfragt werden.",
+        "Validiert einen als JSON-String übergebenen Prozessartikel, wendet den Styleguide an und erzeugt eine 30 Minuten gültige Vorschau-ID samt Diagramm-Metadaten. Dieses Tool veröffentlicht niemals in Confluence. Leite Rollen und die Anzahl der Schritte selbst aus den beschriebenen Aktionen ab. Frage den Benutzer niemals nach einer gewünschten Schrittzahl oder nach technischen Schemafeldern. Frage nur nach fachlichen Informationen, die für eine korrekte Dokumentation tatsächlich fehlen und nicht aus dem Eingangstext abgeleitet werden können.",
       inputSchema: {
-        article: articleSpecSchema.describe(
-          "Vollständiger, aus dem Benutzertext extrahierter Prozessartikel. Keine Fakten erfinden.",
+        articleJson: z.string().min(2).max(100_000).describe(
+          "Vollständiges ArticleSpec als JSON-kodierter String. Extrahiere die Prozessschritte selbst aus dem Benutzertext und nummeriere sie lückenlos ab 1. Erfinde keine Fakten. Frage nicht nach der Anzahl der Schritte.",
         ),
       },
     },
-    async ({ article }) => {
+    async ({ articleJson }) => {
       try {
+        let article: unknown;
+        try {
+          article = JSON.parse(articleJson);
+        } catch {
+          throw new Error("articleJson muss ein gültiger JSON-String sein.");
+        }
         const spec = validateArticleSpec(article);
         const { previewId, style, expiresAt } = storeArticlePreview(
           spec,
@@ -1179,7 +1185,7 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
         JSON.stringify({
           status: "ok",
           service: "autodocbot-v2",
-          version: "0.1.0",
+          version: "0.1.1",
           authMode: config.authMode,
         }),
       );

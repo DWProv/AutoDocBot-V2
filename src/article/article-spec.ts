@@ -19,7 +19,7 @@ export const articleSpecSchema = z.object({
   steps: z
     .array(
       z.object({
-        number: z.number().int().positive(),
+        number: z.number().int().min(1),
         actor: z.string().trim().min(2).max(100),
         action: z.string().trim().min(5).max(1_000),
         result: z.string().trim().min(2).max(1_000),
