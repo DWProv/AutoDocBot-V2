@@ -472,22 +472,17 @@ Je nach aktueller Copilot-Studio-Oberfläche heißen die Felder leicht anders. E
 
 ### Empfohlene Agentenanweisung
 
-```text
-Prüfe zuerst die Confluence-Verbindung und rufe anschließend den Styleguide ab.
-Strukturiere ausschließlich Fakten aus dem Benutzertext. Frage bei fehlenden
-fachlichen Angaben nach und erfinde keine Rollen, Systeme, Fristen oder Ausnahmen.
-Erzeuge immer zuerst eine Vorschau. Veröffentliche erst, wenn der Benutzer die
-konkrete Vorschau ausdrücklich bestätigt hat. Übergib diese Bestätigung als
-confirmed=true an publish_process_article.
-```
+Die vollständige kopierfertige Studio-Anweisung steht in
+[`docs/copilot-agent-instructions.md`](docs/copilot-agent-instructions.md). Der
+MCP-Server liefert die zentralen Regeln zusätzlich als MCP-Serveranweisungen aus.
 
 ## Container und Azure-Deployment
 
 ### Docker lokal
 
 ```bash
-docker build -t autodocbot-v2:0.1.1 .
-docker run --rm -p 3000:3000 --env-file .env autodocbot-v2:0.1.1
+docker build -t autodocbot-v2:0.1.2 .
+docker run --rm -p 3000:3000 --env-file .env autodocbot-v2:0.1.2
 ```
 
 Das Multi-Stage-Dockerfile kompiliert TypeScript im Build-Image und übernimmt nur Produktionsabhängigkeiten sowie `dist/` in das Runtime-Image. Der Prozess läuft als unprivilegierter Benutzer `node`.
@@ -515,7 +510,7 @@ az acr create -g "$RG" -n "$ACR" --sku Basic --admin-enabled false
 az storage account create -g "$RG" -n "$STORAGE" -l "$LOCATION" --sku Standard_LRS --min-tls-version TLS1_2
 az storage share-rm create -g "$RG" --storage-account "$STORAGE" --name autodocbot-tokenstore --quota 1
 az containerapp env create -g "$RG" -n "$ENVIRONMENT" -l "$LOCATION"
-az acr build -r "$ACR" -t autodocbot-v2:0.1.1 .
+az acr build -r "$ACR" -t autodocbot-v2:0.1.2 .
 ```
 
 Danach wird der File Share im Container-Apps-Environment registriert:
@@ -535,7 +530,7 @@ az containerapp env storage set \
 
 Die Container App benötigt anschließend:
 
-- Image `<ACR>.azurecr.io/autodocbot-v2:0.1.1`
+- Image `<ACR>.azurecr.io/autodocbot-v2:0.1.2`
 - externe Ingress-Regel, Zielport `3000`
 - `AUTH_MODE=entra`
 - alle Entra- und Atlassian-Werte aus der Konfigurationstabelle
@@ -655,7 +650,7 @@ AutoDocBot verwendet das Atlassian-3LO-Token der zugehörigen MCP-Benutzeridenti
 - Vorschauen und OAuth-State liegen im Arbeitsspeicher. Ein Neustart macht sie ungültig.
 - Mehrere Replicas benötigen einen gemeinsamen Store für Vorschauen und OAuth-State; deshalb läuft der aktuelle PoC mit einer Replica.
 - Die Publishing-Pipeline ist nicht transaktional. Ein Fehler beim Attachment kann eine bereits angelegte Seite ohne fertiges Diagramm hinterlassen.
-- Der Seitentitel erhält aktuell den Zusatz `– PoC <Zeitstempel>`.
+- Neue Seiten verwenden den fachlichen ArticleSpec-Titel ohne PoC-Zusatz. Ein eigener Aktualisierungs- oder Konfliktablauf für bereits vorhandene gleichnamige Seiten fehlt noch.
 - Die Liste erlaubter Spaces wird beim Atlassian-Login geladen und ist nicht unbegrenzt paginiert.
 - Es gibt noch keine Benutzeroberfläche zur Verwaltung oder zum Widerruf gespeicherter Verbindungen.
 - Styleguide und ArticleSpec sind im Code versioniert; eine mandantenfähige Konfigurationsverwaltung ist noch nicht umgesetzt.

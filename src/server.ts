@@ -145,6 +145,14 @@ const articlePreviews = new Map<
     expiresAt: number;
   }
 >();
+const mcpAgentInstructions = [
+  "Prüfe vor der Artikelarbeit mit get_confluence_connection, ob der aktuelle Benutzer mit Confluence verbunden ist.",
+  "Rufe get_article_styleguide ab und wende den gelieferten Styleguide auf jeden Artikel an.",
+  "Leite Rollen, Prozessschritte, Entscheidungen, Ausnahmen und insbesondere die Anzahl der Schritte selbst aus dem Benutzertext ab. Frage niemals nach einer gewünschten Schrittzahl oder nach technischen Schemafeldern.",
+  "Stelle nur fachliche Rückfragen, wenn eine fehlende Information für eine korrekte Dokumentation zwingend benötigt wird und nicht aus dem Benutzertext abgeleitet werden kann. Erfinde keine Fakten.",
+  "Erzeuge mit preview_process_article immer zuerst eine Vorschau und zeige dem Benutzer die wesentlichen Inhalte und die Diagrammrichtung.",
+  "Rufe publish_process_article ausschließlich auf, nachdem der Benutzer die konkrete aktuelle Vorschau ausdrücklich bestätigt hat. Eine allgemeine Bitte, einen Artikel zu erstellen, ist noch keine Veröffentlichungsbestätigung.",
+].join("\n");
 const tokenEncryptionKey = loadOrCreateEncryptionKey({
   encodedKey: process.env.TOKEN_ENCRYPTION_KEY || undefined,
   localKeyPath: ".local/token-encryption.key",
@@ -553,8 +561,7 @@ async function publishStoredPreview(
   }
   articlePreviews.delete(previewId);
 
-  const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
-  const title = `${preview.spec.title} – PoC ${timestamp}`;
+  const title = preview.spec.title;
   const attachmentName = `process-diagram-${Date.now()}.svg`;
   const apiBase = `https://api.atlassian.com/ex/confluence/${encodeURIComponent(activeSession.cloudId)}`;
   const headers = {
@@ -667,10 +674,13 @@ async function publishArticle(
 }
 
 function createPublicationMcpServer(identity: McpIdentity): McpServer {
-  const mcp = new McpServer({
-    name: "autodocbot-v2",
-    version: "0.1.1",
-  });
+  const mcp = new McpServer(
+    {
+      name: "autodocbot-v2",
+      version: "0.1.2",
+    },
+    { instructions: mcpAgentInstructions },
+  );
 
   mcp.registerTool(
     "get_confluence_connection",
@@ -1185,7 +1195,7 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
         JSON.stringify({
           status: "ok",
           service: "autodocbot-v2",
-          version: "0.1.1",
+          version: "0.1.2",
           authMode: config.authMode,
         }),
       );

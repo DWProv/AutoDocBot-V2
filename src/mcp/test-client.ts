@@ -4,7 +4,7 @@ import { onboardingSampleSpec } from "../article/sample-process.js";
 
 const client = new Client({
   name: "autodocbot-local-test-client",
-  version: "0.1.1",
+  version: "0.1.2",
 });
 
 const transport = new StreamableHTTPClientTransport(
@@ -13,6 +13,10 @@ const transport = new StreamableHTTPClientTransport(
 
 try {
   await client.connect(transport);
+  const instructions = client.getInstructions();
+  if (!instructions?.includes("Schrittzahl")) {
+    throw new Error("Verbindliche MCP-Agentenanweisungen fehlen.");
+  }
   const tools = await client.listTools();
   const toolNames = tools.tools.map((tool) => tool.name);
   const expectedTools = [
