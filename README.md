@@ -426,7 +426,16 @@ Für den produktiven Zugriff werden typischerweise zwei Entra-App-Registrierunge
 1. App-Registrierung für die MCP-API anlegen.
 2. Unter **Expose an API** eine Application ID URI konfigurieren, üblicherweise `api://<API-CLIENT-ID>`.
 3. Delegierten Scope `access_as_user` anlegen.
-4. Tenant-ID und API-Client-ID als `ENTRA_TENANT_ID` und `ENTRA_CLIENT_ID` konfigurieren.
+4. Im Manifest der API-App `api.requestedAccessTokenVersion` auf `2` setzen. Andernfalls kann Entra bei einer Single-Tenant-App ein v1-Token mit einem abweichenden Issuer ausstellen.
+5. Tenant-ID und API-Client-ID als `ENTRA_TENANT_ID` und `ENTRA_CLIENT_ID` konfigurieren.
+
+Alternativ lässt sich die Token-Version mit der Azure CLI setzen:
+
+```bash
+az ad app update \
+  --id <API-CLIENT-ID> \
+  --requested-access-token-version 2
+```
 
 Der vollständige Scope lautet dann:
 
@@ -619,6 +628,7 @@ Prüfen:
 - `tid` entspricht `ENTRA_TENANT_ID`
 - `azp`/`appid` steht in `ENTRA_ALLOWED_CLIENT_IDS`
 - Token stammt vom v2.0-Issuer des richtigen Tenants
+- bei `unexpected "iss" claim value`: `api.requestedAccessTokenVersion=2` an der API-App setzen und die Copilot-OAuth-Verbindung neu erstellen
 
 ### MCP antwortet mit `403 Invalid Host header`
 
