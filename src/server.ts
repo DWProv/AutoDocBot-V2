@@ -9,10 +9,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import {
-  articleSpecSchema,
   validateArticleSpec,
   type ArticleSpec,
 } from "./article/article-spec.js";
+import {
+  deduplicateQualityIssues,
+  detectSourceQualityIssues,
+  parseQualityReviewJson,
+  reviewToIssues,
+} from "./article/quality-review.js";
 import { renderConfluenceStorage } from "./article/renderer.js";
 import { onboardingSampleSpec } from "./article/sample-process.js";
 import {
@@ -149,7 +154,8 @@ const mcpAgentInstructions = [
   "Prüfe vor der Artikelarbeit mit get_confluence_connection, ob der aktuelle Benutzer mit Confluence verbunden ist.",
   "Rufe get_article_styleguide ab und wende den gelieferten Styleguide auf jeden Artikel an.",
   "Leite Rollen, Prozessschritte, Entscheidungen, Ausnahmen und insbesondere die Anzahl der Schritte selbst aus dem Benutzertext ab. Frage niemals nach einer gewünschten Schrittzahl oder nach technischen Schemafeldern.",
-  "Stelle nur fachliche Rückfragen, wenn eine fehlende Information für eine korrekte Dokumentation zwingend benötigt wird und nicht aus dem Benutzertext abgeleitet werden kann. Erfinde keine Fakten.",
+  "Prüfe den konsolidierten ProzessText vor jeder Vorschau auf Widersprüche, fehlende Verantwortlichkeiten, offene Fragen und unbelegte Annahmen. Übergib diese Prüfung vollständig als qualityReviewJson.",
+  "Wenn preview_process_article clarification_required zurückgibt, stelle die gelieferten fachlichen Fragen. Erzeuge erst nach den Antworten einen widerspruchsfreien konsolidierten sourceText und einen neuen Qualitätsbericht. Erfinde keine Fakten.",
   "Erzeuge mit preview_process_article immer zuerst eine Vorschau und zeige dem Benutzer die wesentlichen Inhalte und die Diagrammrichtung.",
   "Rufe publish_process_article ausschließlich auf, nachdem der Benutzer die konkrete aktuelle Vorschau ausdrücklich bestätigt hat. Eine allgemeine Bitte, einen Artikel zu erstellen, ist noch keine Veröffentlichungsbestätigung.",
 ].join("\n");
@@ -677,7 +683,7 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
   const mcp = new McpServer(
     {
       name: "autodocbot-v2",
-      version: "0.1.2",
+      version: "0.1.3",
     },
     { instructions: mcpAgentInstructions },
   );
@@ -766,15 +772,44 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
     {
       title: "Prozessartikel als Vorschau erzeugen",
       description:
-        "Validiert einen als JSON-String übergebenen Prozessartikel, wendet den Styleguide an und erzeugt eine 30 Minuten gültige Vorschau-ID samt Diagramm-Metadaten. Dieses Tool veröffentlicht niemals in Confluence. Leite Rollen und die Anzahl der Schritte selbst aus den beschriebenen Aktionen ab. Frage den Benutzer niemals nach einer gewünschten Schrittzahl oder nach technischen Schemafeldern. Frage nur nach fachlichen Informationen, die für eine korrekte Dokumentation tatsächlich fehlen und nicht aus dem Eingangstext abgeleitet werden können.",
+        "Prüft den konsolidierten Benutzertext und einen obligatorischen Qualitätsbericht auf Widersprüche, fehlende Verantwortlichkeiten, offene Fragen und unbelegte Annahmen. Solange Probleme bestehen, liefert das Tool clarification_required und keine Vorschau-ID. Nur ein widerspruchsfreier Prozess wird als ArticleSpec validiert und als 30 Minuten gültige Vorschau gespeichert. Das Tool veröffentlicht niemals in Confluence. Leite die Schrittzahl selbst ab und frage niemals nach technischen Schemafeldern.",
       inputSchema: {
+        sourceText: z.string().min(20).max(30_000).describe(
+          "Aktueller konsolidierter fachlicher ProzessText. Beim ersten Aufruf entspricht er dem Benutzereingangstext. Nach Rückfragen enthält er die bestätigten Antworten und keine überholten widersprüchlichen Aussagen.",
+        ),
         articleJson: z.string().min(2).max(100_000).describe(
           "Vollständiges ArticleSpec als JSON-kodierter String. Extrahiere die Prozessschritte selbst aus dem Benutzertext und nummeriere sie lückenlos ab 1. Erfinde keine Fakten. Frage nicht nach der Anzahl der Schritte.",
         ),
+        qualityReviewJson: z.string().min(2).max(50_000).describe(
+          "Obligatorischer JSON-kodierter Qualitätsbericht mit exakt den Arrays contradictions, missingResponsibilities, openQuestions und assumptions. Jeder Eintrag hat finding und question. Nutze leere Arrays nur, wenn der konsolidierte Text in der jeweiligen Kategorie wirklich eindeutig ist. Beispiel: {\"contradictions\":[],\"missingResponsibilities\":[],\"openQuestions\":[],\"assumptions\":[]}.",
+        ),
       },
     },
-    async ({ articleJson }) => {
+    async ({ sourceText, articleJson, qualityReviewJson }) => {
       try {
+        const review = parseQualityReviewJson(qualityReviewJson);
+        const issues = deduplicateQualityIssues([
+          ...reviewToIssues(review),
+          ...detectSourceQualityIssues(sourceText),
+        ]).map((issue, index) => ({
+          id: `quality-${index + 1}`,
+          ...issue,
+        }));
+        if (issues.length > 0) {
+          const output = {
+            status: "clarification_required",
+            previewCreated: false,
+            issues,
+            questions: issues.map((issue) => issue.question),
+            nextAction:
+              "Stelle dem Benutzer ausschließlich diese fachlichen Fragen. Führe die Antworten anschließend in einem bereinigten konsolidierten sourceText zusammen, aktualisiere ArticleSpec und Qualitätsbericht und rufe preview_process_article erneut auf. Frage nicht nach einer Schrittzahl oder technischen Schemafeldern.",
+          };
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(output, null, 2) }],
+            structuredContent: output,
+          };
+        }
+
         let article: unknown;
         try {
           article = JSON.parse(articleJson);
@@ -805,6 +840,13 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
             generated: true,
             direction: style.diagramDirection,
             processStepCount: spec.steps.length,
+          },
+          qualityReview: {
+            status: "passed",
+            contradictions: 0,
+            missingResponsibilities: 0,
+            openQuestions: 0,
+            assumptions: 0,
           },
           publicationStatus: "not_published",
           nextAction:
@@ -1195,7 +1237,7 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
         JSON.stringify({
           status: "ok",
           service: "autodocbot-v2",
-          version: "0.1.2",
+          version: "0.1.3",
           authMode: config.authMode,
         }),
       );

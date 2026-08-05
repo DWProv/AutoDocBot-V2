@@ -4,7 +4,7 @@ import { onboardingSampleSpec } from "../article/sample-process.js";
 
 const client = new Client({
   name: "autodocbot-local-test-client",
-  version: "0.1.2",
+  version: "0.1.3",
 });
 
 const transport = new StreamableHTTPClientTransport(
@@ -44,10 +44,45 @@ try {
 
   const preview = await client.callTool({
     name: "preview_process_article",
-    arguments: { articleJson: JSON.stringify(onboardingSampleSpec()) },
+    arguments: {
+      sourceText:
+        "HR meldet den Eintritt fünf Arbeitstage vorher. Dennis erstellt das Benutzerkonto und bereitet den Laptop vor. Die Führungskraft übergibt die Arbeitsmittel am ersten Arbeitstag.",
+      articleJson: JSON.stringify(onboardingSampleSpec()),
+      qualityReviewJson: JSON.stringify({
+        contradictions: [],
+        missingResponsibilities: [],
+        openQuestions: [],
+        assumptions: [],
+      }),
+    },
   });
   if (preview.isError) {
     throw new Error("Vorschau-Tool ist fehlgeschlagen.");
+  }
+
+  const clarification = await client.callTool({
+    name: "preview_process_article",
+    arguments: {
+      sourceText:
+        "HR sagt Dennis irgendwann Bescheid, manchmal erst am ersten Arbeitstag. Das Konto muss spätestens drei Tage vorher fertig sein. Wer die Pflichtangaben prüft, weiß ich nicht.",
+      articleJson: JSON.stringify(onboardingSampleSpec()),
+      qualityReviewJson: JSON.stringify({
+        contradictions: [],
+        missingResponsibilities: [],
+        openQuestions: [],
+        assumptions: [],
+      }),
+    },
+  });
+  const clarificationOutput = clarification.structuredContent as
+    | { status?: string; previewId?: string }
+    | undefined;
+  if (
+    clarification.isError ||
+    clarificationOutput?.status !== "clarification_required" ||
+    clarificationOutput.previewId
+  ) {
+    throw new Error("Semantische Probleme haben die Vorschau nicht blockiert.");
   }
 
   console.log(

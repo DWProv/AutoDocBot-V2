@@ -2,7 +2,7 @@
 
 AutoDocBot V2 ist ein End-to-End-verifizierter Proof of Concept für einen Copilot-Agenten, der frei formulierte Prozessbeschreibungen in konsistente Confluence-Prozessartikel umwandelt. Der Agent strukturiert den Inhalt, wendet einen verbindlichen und zugleich anpassbaren Styleguide an, erzeugt ein SVG-Prozessdiagramm und veröffentlicht den bestätigten Artikel über einen MCP-Server im Namen des angemeldeten Atlassian-Benutzers.
 
-> Aktueller Stand: Version `0.1.2`. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, Copilot Studio, verschlüsselte Benutzerverbindungen, Azure Container Apps sowie die bestätigte Veröffentlichung eines Artikels mit SVG-Diagramm wurden praktisch verifiziert.
+> Aktueller Stand: Version `0.1.3`. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, Copilot Studio, semantische Vorprüfung, verschlüsselte Benutzerverbindungen, Azure Container Apps sowie die bestätigte Veröffentlichung eines Artikels mit SVG-Diagramm wurden praktisch verifiziert.
 
 ## Inhaltsverzeichnis
 
@@ -122,7 +122,7 @@ sequenceDiagram
         MCP-->>MCP: Token verschlüsselt je Benutzer speichern
     end
     Copilot->>MCP: get_article_styleguide
-    Copilot->>MCP: preview_process_article(articleJson)
+    Copilot->>MCP: preview_process_article(sourceText, articleJson, qualityReviewJson)
     MCP-->>Copilot: validierte Vorschau und previewId
     Copilot-->>User: Vorschau und Rückfrage zur Veröffentlichung
     User->>Copilot: ausdrücklich bestätigen
@@ -140,6 +140,8 @@ sequenceDiagram
 ├── src/
 │   ├── article/
 │   │   ├── article-spec.ts          # Zod-Schema und fachliche Validierung
+│   │   ├── quality-review.ts        # semantische Vorprüfung und Qualitätsbericht
+│   │   ├── quality-review-check.ts  # automatisierter Konflikttest
 │   │   ├── renderer.ts              # sicheres Confluence-Storage-Rendering
 │   │   ├── styleguide.ts            # Standardregeln und erlaubte Overrides
 │   │   ├── sample-process.ts        # Beispielprozess für lokale Tests
@@ -305,7 +307,7 @@ Der Streamable-HTTP-Endpunkt befindet sich unter `/mcp` und akzeptiert `POST`.
 |---|---:|---|
 | `get_confluence_connection` | nein | prüft die Benutzerverbindung und liefert erlaubte Spaces oder einen signierten Atlassian-Verknüpfungslink |
 | `get_article_styleguide` | nein | liefert Standardstil, erlaubte Anpassungen, feste Regeln und Agentenanweisungen |
-| `preview_process_article` | nein | validiert ein als JSON-String übergebenes `ArticleSpec`, rendert Diagramm-Metadaten und erzeugt eine 30 Minuten gültige Vorschau-ID |
+| `preview_process_article` | nein | prüft `sourceText` und `qualityReviewJson`; nur ohne offene Probleme validiert es `articleJson` und erzeugt eine 30 Minuten gültige Vorschau-ID |
 | `publish_process_article` | ja | veröffentlicht genau eine bestätigte Vorschau inklusive SVG-Diagramm |
 
 ### Vorgesehene Tool-Reihenfolge
@@ -322,7 +324,31 @@ Der Agent darf `publish_process_article` nicht automatisch direkt nach der Vorsc
 
 ## ArticleSpec und Styleguide
 
-Der Copilot erzeugt keinen fertigen HTML-Artikel. Stattdessen serialisiert er strukturierte Daten als JSON-String im Feld `articleJson`. Die Anzahl der Schritte leitet der Agent aus den beschriebenen Hauptaktionen ab; sie ist keine Benutzereingabe. Der MCP-Server parst und validiert den String als `ArticleSpec`. Das flache Tool-Eingabefeld umgeht bekannte Schemaeinschränkungen in Copilot Studio, ohne die serverseitige Validierung aufzuweichen, und verhindert, dass Benutzertext ungeprüft als Confluence-Markup ausgeführt wird.
+Der Copilot erzeugt keinen fertigen HTML-Artikel. Stattdessen übergibt er drei flache String-Felder: den aktuellen konsolidierten Prozess als `sourceText`, strukturierte Artikeldaten als `articleJson` und den obligatorischen Qualitätsbericht als `qualityReviewJson`. Die Anzahl der Schritte leitet der Agent aus den beschriebenen Hauptaktionen ab; sie ist keine Benutzereingabe. Der MCP-Server prüft zuerst offene Qualitätsprobleme und parst anschließend `articleJson` als `ArticleSpec`. Die flachen Tool-Eingabefelder umgehen bekannte Schemaeinschränkungen in Copilot Studio, ohne die serverseitige Validierung aufzuweichen.
+
+### Semantische Vorprüfung
+
+Der Qualitätsbericht enthält exakt diese Kategorien:
+
+```json
+{
+  "contradictions": [],
+  "missingResponsibilities": [],
+  "openQuestions": [],
+  "assumptions": []
+}
+```
+
+Jeder gefundene Eintrag besitzt `finding` und `question`. Zusätzlich prüft der Server den ProzessText auf explizite Unsicherheiten und typische Konflikte, etwa unbekannte Verantwortlichkeiten, unbestimmte Fristen, widersprüchliche Vorlaufzeiten oder zwei verschiedene Diagrammrichtungen.
+
+Solange mindestens ein Problem offen ist, liefert das Vorschau-Tool:
+
+```text
+status: clarification_required
+previewCreated: false
+```
+
+Es wird keine `previewId` erzeugt. Der Agent stellt die gelieferten fachlichen Fragen und ruft das Tool erst mit einem durch die Benutzerantworten bereinigten ProzessText erneut auf. Diese deterministische Vorprüfung ergänzt die Modellbewertung; sie ist keine vollständige allgemeine Widerspruchserkennung.
 
 Ein verkürztes Beispiel:
 
@@ -504,8 +530,8 @@ MCP-Server liefert die zentralen Regeln zusätzlich als MCP-Serveranweisungen au
 ### Docker lokal
 
 ```bash
-docker build -t autodocbot-v2:0.1.2 .
-docker run --rm -p 3000:3000 --env-file .env autodocbot-v2:0.1.2
+docker build -t autodocbot-v2:0.1.3 .
+docker run --rm -p 3000:3000 --env-file .env autodocbot-v2:0.1.3
 ```
 
 Das Multi-Stage-Dockerfile kompiliert TypeScript im Build-Image und übernimmt nur Produktionsabhängigkeiten sowie `dist/` in das Runtime-Image. Der Prozess läuft als unprivilegierter Benutzer `node`.
@@ -533,7 +559,7 @@ az acr create -g "$RG" -n "$ACR" --sku Basic --admin-enabled false
 az storage account create -g "$RG" -n "$STORAGE" -l "$LOCATION" --sku Standard_LRS --min-tls-version TLS1_2
 az storage share-rm create -g "$RG" --storage-account "$STORAGE" --name autodocbot-tokenstore --quota 1
 az containerapp env create -g "$RG" -n "$ENVIRONMENT" -l "$LOCATION"
-az acr build -r "$ACR" -t autodocbot-v2:0.1.2 .
+az acr build -r "$ACR" -t autodocbot-v2:0.1.3 .
 ```
 
 Danach wird der File Share im Container-Apps-Environment registriert:
@@ -553,7 +579,7 @@ az containerapp env storage set \
 
 Die Container App benötigt anschließend:
 
-- Image `<ACR>.azurecr.io/autodocbot-v2:0.1.2`
+- Image `<ACR>.azurecr.io/autodocbot-v2:0.1.3`
 - externe Ingress-Regel, Zielport `3000`
 - `AUTH_MODE=entra`
 - alle Entra- und Atlassian-Werte aus der Konfigurationstabelle
@@ -581,6 +607,7 @@ Ein nicht authentifizierter `POST` auf `/mcp` muss im Entra-Modus mit `401` und 
 npm run typecheck
 npm run build
 npm run check:styleguide
+npm run check:quality-review
 npm run check:token-store
 ```
 
@@ -599,6 +626,7 @@ npm run test:mcp
 | `npm run typecheck` | TypeScript ohne Ausgabe kompilierbar |
 | `npm run build` | Produktionsartefakte in `dist/` erzeugen |
 | `npm run check:styleguide` | ArticleSpec, Overrides, Terminologie, sicheres Rendering und Diagrammposition |
+| `npm run check:quality-review` | explizite Widersprüche, unbestimmte Fristen und fehlende Verantwortlichkeiten |
 | `npm run check:token-store` | Verschlüsselung, erneutes Laden und Löschen des Stores |
 | `npm run test:mcp` | MCP-Verbindung, erwartete Tools und nicht publizierende Vorschau |
 
