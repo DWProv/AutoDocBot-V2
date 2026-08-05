@@ -1,0 +1,53 @@
+properties:
+  template:
+    containers:
+      - name: autodocbot-v2
+        image: acrdwautodocbotv2.azurecr.io/autodocbot-v2:0.1.0
+        env:
+          - name: HOST
+            value: 0.0.0.0
+          - name: PORT
+            value: "3000"
+          - name: AUTH_MODE
+            value: entra
+          - name: ATLASSIAN_CLIENT_ID
+            value: YOUR_ATLASSIAN_CLIENT_ID
+          - name: ATLASSIAN_CLIENT_SECRET
+            secretRef: atlassian-client-secret
+          - name: ATLASSIAN_SITE_URL
+            value: https://your-site.atlassian.net
+          - name: ATLASSIAN_SPACE_ID
+            value: YOUR_CONFLUENCE_SPACE_ID
+          - name: ATLASSIAN_REDIRECT_URI
+            value: https://YOUR_CONTAINER_APP_FQDN/oauth/callback
+          - name: ENTRA_TENANT_ID
+            value: YOUR_ENTRA_TENANT_ID
+          - name: ENTRA_CLIENT_ID
+            value: YOUR_ENTRA_API_CLIENT_ID
+          - name: ENTRA_REQUIRED_SCOPE
+            value: access_as_user
+          - name: ENTRA_ALLOWED_CLIENT_IDS
+            value: YOUR_COPILOT_CLIENT_ID
+          - name: PUBLIC_BASE_URL
+            value: https://YOUR_CONTAINER_APP_FQDN
+          - name: ALLOWED_HOSTS
+            value: YOUR_CONTAINER_APP_FQDN
+          - name: AUTH_LINK_SECRET
+            secretRef: auth-link-secret
+          - name: TOKEN_ENCRYPTION_KEY
+            secretRef: token-encryption-key
+          - name: TOKEN_STORE_PATH
+            value: /data/connections.json
+        resources:
+          cpu: 0.5
+          memory: 1Gi
+        volumeMounts:
+          - volumeName: token-store
+            mountPath: /data
+    scale:
+      minReplicas: 1
+      maxReplicas: 1
+    volumes:
+      - name: token-store
+        storageType: AzureFile
+        storageName: tokenstore
