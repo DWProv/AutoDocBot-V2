@@ -1,13 +1,14 @@
 # AutoDocBot V2
 
-AutoDocBot V2 ist ein Proof of Concept für einen Copilot-Agenten, der frei formulierte Prozessbeschreibungen in konsistente Confluence-Prozessartikel umwandelt. Der Agent strukturiert den Inhalt, wendet einen verbindlichen und zugleich anpassbaren Styleguide an, erzeugt ein SVG-Prozessdiagramm und veröffentlicht den bestätigten Artikel über einen MCP-Server im Namen des angemeldeten Atlassian-Benutzers.
+AutoDocBot V2 ist ein End-to-End-verifizierter Proof of Concept für einen Copilot-Agenten, der frei formulierte Prozessbeschreibungen in konsistente Confluence-Prozessartikel umwandelt. Der Agent strukturiert den Inhalt, wendet einen verbindlichen und zugleich anpassbaren Styleguide an, erzeugt ein SVG-Prozessdiagramm und veröffentlicht den bestätigten Artikel über einen MCP-Server im Namen des angemeldeten Atlassian-Benutzers.
 
-> Status: funktionsfähiger PoC. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, verschlüsselte Benutzerverbindungen und Azure Container Apps wurden praktisch verifiziert.
+> Aktueller Stand: Version `0.1.2`. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, Copilot Studio, verschlüsselte Benutzerverbindungen, Azure Container Apps sowie die bestätigte Veröffentlichung eines Artikels mit SVG-Diagramm wurden praktisch verifiziert.
 
 ## Inhaltsverzeichnis
 
 - [Zielbild](#zielbild)
 - [Funktionsumfang](#funktionsumfang)
+- [Verifizierter End-to-End-Stand](#verifizierter-end-to-end-stand)
 - [Architektur](#architektur)
 - [Ablauf aus Benutzersicht](#ablauf-aus-benutzersicht)
 - [Projektstruktur](#projektstruktur)
@@ -24,6 +25,8 @@ AutoDocBot V2 ist ein Proof of Concept für einen Copilot-Agenten, der frei form
 - [HTTP-Endpunkte](#http-endpunkte)
 - [Fehlerbehebung](#fehlerbehebung)
 - [Bekannte PoC-Grenzen](#bekannte-poc-grenzen)
+- [Weiterentwicklung](#weiterentwicklung)
+- [Lizenz](#lizenz)
 
 ## Zielbild
 
@@ -53,11 +56,29 @@ Der Copilot-Agent übernimmt daraus folgende Aufgaben:
 - flexibler Styleguide mit unveränderbaren Sicherheits- und Qualitätsregeln
 - Diagramme in den Richtungen `top-down` und `left-right`
 - Vorschau vor jeder Veröffentlichung; Vorschau-IDs sind 30 Minuten gültig und nur einmal verwendbar
+- fachliche Seitentitel ohne technischen PoC- oder Zeitstempel-Zusatz
+- verbindliche MCP-Serveranweisungen für Ableitung, Rückfragen, Vorschau und Veröffentlichungsbestätigung
 - Microsoft-Entra-Prüfung für produktive MCP-Aufrufe
 - pro Benutzer getrennte, AES-256-GCM-verschlüsselte Atlassian-Verbindungen
 - Container-Image und persistenter Token Store für Azure Container Apps
 
 Nicht Bestandteil dieses PoC sind eine Administrationsoberfläche, eine Datenbank, Versionsverwaltung für individuelle Styleguides und eine vollständig automatisierte Infrastruktur-Pipeline.
+
+## Verifizierter End-to-End-Stand
+
+| Baustein | Status | Nachweis im PoC |
+|---|---:|---|
+| Atlassian OAuth 2.0 (3LO) | verifiziert | Benutzer, Ziel-Site, Space und Refresh Token wurden erkannt |
+| Veröffentlichung unter Benutzeridentität | verifiziert | Author-ID der Confluence-Seitenversion entsprach dem verbundenen Benutzer |
+| Entra OAuth für MCP | verifiziert | delegierter `access_as_user`-Scope, Tenant, Audience und erlaubter Copilot-Client wurden validiert |
+| Copilot-Studio-Tool-Discovery | verifiziert | alle vier MCP-Tools wurden geladen und aufgerufen |
+| Benutzergebundene Atlassian-Verknüpfung | verifiziert | Copilot lieferte einen signierten Link und speicherte die Verbindung benutzerbezogen |
+| ArticleSpec und Styleguide | verifiziert | natürlichsprachlicher Prozess wurde ohne Abfrage einer gewünschten Schrittzahl strukturiert |
+| Vorschau und Bestätigung | verifiziert | Veröffentlichung erfolgte erst nach einer separaten Bestätigung |
+| SVG-Diagramm | verifiziert | Diagramm wurde erzeugt, hochgeladen und als letzter Artikelabschnitt eingebettet |
+| Azure Container Apps | verifiziert | Entra-Modus, HTTPS-Ingress, ACR-Image und persistenter Azure-File-Mount sind aktiv |
+
+Der Stand belegt die technische Machbarkeit. Die unter [Bekannte PoC-Grenzen](#bekannte-poc-grenzen) genannten Punkte bleiben vor einem breiten Produktivbetrieb relevant.
 
 ## Architektur
 
@@ -101,7 +122,7 @@ sequenceDiagram
         MCP-->>MCP: Token verschlüsselt je Benutzer speichern
     end
     Copilot->>MCP: get_article_styleguide
-    Copilot->>MCP: preview_process_article(ArticleSpec)
+    Copilot->>MCP: preview_process_article(articleJson)
     MCP-->>Copilot: validierte Vorschau und previewId
     Copilot-->>User: Vorschau und Rückfrage zur Veröffentlichung
     User->>Copilot: ausdrücklich bestätigen
@@ -132,7 +153,9 @@ sequenceDiagram
 │   ├── mcp/
 │   │   └── test-client.ts           # lokaler MCP-Protokolltest
 │   └── server.ts                    # HTTP, OAuth, MCP und Publishing-Pipeline
-├── docs/styleguide.md               # lesbare Styleguide-Dokumentation
+├── docs/
+│   ├── styleguide.md                # lesbare Styleguide-Dokumentation
+│   └── copilot-agent-instructions.md # kopierfertige Studio-Anweisungen
 ├── azure/containerapp-volume.yaml   # Beispiel für Azure File Mount und Runtime
 ├── Dockerfile                       # Multi-Stage-Produktionsimage
 ├── .env.example                     # Konfigurationsvorlage
@@ -299,7 +322,7 @@ Der Agent darf `publish_process_article` nicht automatisch direkt nach der Vorsc
 
 ## ArticleSpec und Styleguide
 
-Der Copilot erzeugt keinen fertigen HTML-Artikel. Stattdessen serialisiert er strukturierte Daten als JSON-String im Feld `articleJson`. Der MCP-Server parst und validiert diesen String als `ArticleSpec`. Das flache Tool-Eingabefeld umgeht bekannte Schemaeinschränkungen in Copilot Studio, ohne die serverseitige Validierung aufzuweichen, und verhindert, dass Benutzertext ungeprüft als Confluence-Markup ausgeführt wird.
+Der Copilot erzeugt keinen fertigen HTML-Artikel. Stattdessen serialisiert er strukturierte Daten als JSON-String im Feld `articleJson`. Die Anzahl der Schritte leitet der Agent aus den beschriebenen Hauptaktionen ab; sie ist keine Benutzereingabe. Der MCP-Server parst und validiert den String als `ArticleSpec`. Das flache Tool-Eingabefeld umgeht bekannte Schemaeinschränkungen in Copilot Studio, ohne die serverseitige Validierung aufzuweichen, und verhindert, dass Benutzertext ungeprüft als Confluence-Markup ausgeführt wird.
 
 Ein verkürztes Beispiel:
 
@@ -660,12 +683,12 @@ AutoDocBot verwendet das Atlassian-3LO-Token der zugehörigen MCP-Benutzeridenti
 
 Sinnvolle nächste Schritte:
 
-1. Copilot-Studio-MCP-Verbindung gegen die öffentliche Entra-geschützte URL abschließen.
-2. Vorschau- und OAuth-State in Redis oder einer Datenbank persistieren.
-3. idempotente Publishing-Jobs mit Fehlerstatus und Wiederaufnahme einführen.
-4. Styleguides pro Organisation oder Space versionieren.
-5. Audit-Events ohne Token- oder Inhaltslecks protokollieren.
-6. automatisierte Unit-, Integrations- und End-to-End-Tests ergänzen.
+1. Vorschau- und OAuth-State in Redis oder einer Datenbank persistieren.
+2. Idempotente Publishing-Jobs mit Fehlerstatus, Wiederaufnahme und Behandlung gleichnamiger Seiten einführen.
+3. Styleguides pro Organisation oder Space versionieren.
+4. Audit-Events ohne Token- oder Inhaltslecks protokollieren.
+5. Monitoring, Alerting und Backup-Strategien ergänzen.
+6. Automatisierte Unit-, Integrations- und Copilot-End-to-End-Tests ausbauen.
 7. Infrastructure as Code und CI/CD aufbauen.
 
 ## Lizenz
