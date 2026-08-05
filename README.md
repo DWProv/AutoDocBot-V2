@@ -1,52 +1,668 @@
 # AutoDocBot V2
 
-Dieser lokale Test weist nach, dass eine Confluence-Seite mit Atlassian OAuth 2.0 (3LO) im Namen des angemeldeten Benutzers erstellt wird.
+AutoDocBot V2 ist ein Proof of Concept für einen Copilot-Agenten, der frei formulierte Prozessbeschreibungen in konsistente Confluence-Prozessartikel umwandelt. Der Agent strukturiert den Inhalt, wendet einen verbindlichen und zugleich anpassbaren Styleguide an, erzeugt ein SVG-Prozessdiagramm und veröffentlicht den bestätigten Artikel über einen MCP-Server im Namen des angemeldeten Atlassian-Benutzers.
 
-## Einrichtung
+> Status: funktionsfähiger PoC. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, verschlüsselte Benutzerverbindungen und Azure Container Apps wurden praktisch verifiziert.
 
-1. In `.env` die `ATLASSIAN_CLIENT_ID` und das `ATLASSIAN_CLIENT_SECRET` aus der Atlassian Developer Console eintragen.
-2. In der Developer Console muss als Callback exakt `http://localhost:3000/oauth/callback` hinterlegt sein.
-3. Benötigte Scopes: `read:me`, `read:space:confluence`, `read:page:confluence`, `write:page:confluence`, `read:content-details:confluence`, `read:attachment:confluence`, `write:attachment:confluence` und `offline_access`.
-4. Abhängigkeiten installieren und Server starten:
+## Inhaltsverzeichnis
 
-   ```bash
-   npm install
-   npm run dev
-   ```
+- [Zielbild](#zielbild)
+- [Funktionsumfang](#funktionsumfang)
+- [Architektur](#architektur)
+- [Ablauf aus Benutzersicht](#ablauf-aus-benutzersicht)
+- [Projektstruktur](#projektstruktur)
+- [Voraussetzungen](#voraussetzungen)
+- [Lokale Einrichtung](#lokale-einrichtung)
+- [Atlassian-App konfigurieren](#atlassian-app-konfigurieren)
+- [Konfiguration](#konfiguration)
+- [MCP-Tools](#mcp-tools)
+- [ArticleSpec und Styleguide](#articlespec-und-styleguide)
+- [Authentifizierung und Sicherheit](#authentifizierung-und-sicherheit)
+- [Copilot Studio anbinden](#copilot-studio-anbinden)
+- [Container und Azure-Deployment](#container-und-azure-deployment)
+- [Tests und Qualitätsprüfungen](#tests-und-qualitätsprüfungen)
+- [HTTP-Endpunkte](#http-endpunkte)
+- [Fehlerbehebung](#fehlerbehebung)
+- [Bekannte PoC-Grenzen](#bekannte-poc-grenzen)
 
-5. `http://localhost:3000` öffnen und den Schritten im Browser folgen.
+## Zielbild
 
-Tokens werden für diesen Spike ausschließlich im Arbeitsspeicher gehalten und gehen beim Neustart verloren.
+Der Benutzer soll im Copilot-Chat nur den fachlichen Prozess beschreiben müssen, zum Beispiel:
 
-## Lokaler MCP-Endpunkt
+> Wenn ein neuer Mitarbeiter eingestellt wird, meldet HR den Eintritt mindestens fünf Arbeitstage vorher an die IT. Die IT erstellt das Benutzerkonto und bereitet einen gereinigten Laptop vor. Fehlen Pflichtangaben, geht die Anfrage zurück an HR. Am ersten Arbeitstag übergibt die Führungskraft die Arbeitsmittel. Das Diagramm soll von oben nach unten verlaufen.
 
-Der Streamable-HTTP-Endpunkt läuft unter `http://localhost:3000/mcp` und bietet:
+Der Copilot-Agent übernimmt daraus folgende Aufgaben:
 
-- `get_confluence_connection`
-- `get_article_styleguide`
-- `preview_process_article`
-- `publish_process_article`
+1. Fakten, Rollen, Prozessschritte, Entscheidungen und Ausnahmen erkennen.
+2. Fehlende fachliche Pflichtangaben beim Benutzer erfragen, statt sie zu erfinden.
+3. Den Inhalt als validiertes `ArticleSpec` strukturieren.
+4. Styleguide und erlaubte Benutzeranpassungen anwenden.
+5. Eine Vorschau erzeugen und dem Benutzer zur Bestätigung zeigen.
+6. Erst nach ausdrücklicher Bestätigung den Artikel veröffentlichen.
+7. Ein SVG-Diagramm erzeugen, an die Confluence-Seite anhängen und als letzten Abschnitt einbetten.
 
-Der lokale Protokolltest erzeugt nur eine Vorschau und veröffentlicht nichts:
+## Funktionsumfang
 
-```bash
-npm run test:mcp
+- MCP-Server auf Basis von Streamable HTTP
+- vier klar getrennte MCP-Tools für Verbindung, Styleguide, Vorschau und Veröffentlichung
+- Atlassian OAuth 2.0 (3LO) mit Benutzerdelegation und Refresh Tokens
+- Veröffentlichung unter der Identität des verbundenen Atlassian-Benutzers
+- Ziel-Site- und Space-Prüfung vor der Veröffentlichung
+- strukturierte, mit Zod validierte Artikeldaten
+- deterministisches Confluence-Storage-Format statt ungeprüftem Modell-HTML
+- flexibler Styleguide mit unveränderbaren Sicherheits- und Qualitätsregeln
+- Diagramme in den Richtungen `top-down` und `left-right`
+- Vorschau vor jeder Veröffentlichung; Vorschau-IDs sind 30 Minuten gültig und nur einmal verwendbar
+- Microsoft-Entra-Prüfung für produktive MCP-Aufrufe
+- pro Benutzer getrennte, AES-256-GCM-verschlüsselte Atlassian-Verbindungen
+- Container-Image und persistenter Token Store für Azure Container Apps
+
+Nicht Bestandteil dieses PoC sind eine Administrationsoberfläche, eine Datenbank, Versionsverwaltung für individuelle Styleguides und eine vollständig automatisierte Infrastruktur-Pipeline.
+
+## Architektur
+
+```mermaid
+flowchart TD
+    U[Benutzer im Copilot-Chat] --> C[Copilot Studio Agent]
+    C -->|Entra Access Token| M[AutoDocBot MCP-Server]
+    M --> V[ArticleSpec-Validierung]
+    V --> S[Styleguide auflösen]
+    S --> P[Vorschau und Bestätigung]
+    P --> D[SVG-Diagramm erzeugen]
+    D --> A[Confluence REST API]
+    A --> R[Artikel unter Benutzeridentität]
+    M <-->|OAuth 2.0 3LO| O[Atlassian Authorization]
+    M --> T[(verschlüsselter Token Store)]
 ```
 
-## MCP-Authentifizierung
+Es existieren zwei voneinander getrennte OAuth-Beziehungen:
 
-`AUTH_MODE=local` verwendet für lokale Tests die ID aus `LOCAL_USER_ID`. Mit `AUTH_MODE=entra` validiert der MCP-Endpunkt Entra-v2-Access-Tokens einschließlich Signatur, Issuer, Audience, Tenant, Benutzerobjekt, delegiertem Scope und aufrufender Client-Anwendung (`azp`). Erlaubte Client-IDs werden kommasepariert über `ENTRA_ALLOWED_CLIENT_IDS` konfiguriert.
+1. **Copilot → MCP-Server:** Microsoft Entra stellt ein delegiertes Access Token für die AutoDocBot-API aus. Der MCP-Server prüft Signatur, Issuer, Audience, Tenant, Benutzer, Scope und erlaubte Client-Anwendung.
+2. **MCP-Server → Atlassian:** Der Benutzer verbindet sein Atlassian-Konto per OAuth 2.0 (3LO). AutoDocBot verwendet dieses Benutzertoken für Confluence-Aufrufe.
 
-Im Entra-Modus stellt `/.well-known/oauth-protected-resource` die MCP-OAuth-Metadaten nach RFC 9728 bereit. Nicht autorisierte MCP-Aufrufe verweisen über `WWW-Authenticate` auf dieses Dokument.
+Dadurch erhält AutoDocBot weder ein globales Confluence-Servicekonto noch die Berechtigung, unabhängig vom jeweiligen Benutzer zu veröffentlichen.
 
-Atlassian-Verbindungen werden pro MCP-Benutzer AES-256-GCM-verschlüsselt gespeichert. Im lokalen Modus erzeugt der Server dafür einen ignorierten Schlüssel unter `.local/`. Im Entra-Modus muss `TOKEN_ENCRYPTION_KEY` als Base64-kodierter 32-Byte-Schlüssel gesetzt werden.
+## Ablauf aus Benutzersicht
 
-Der Token Store lässt sich unabhängig prüfen:
+```mermaid
+sequenceDiagram
+    actor User as Benutzer
+    participant Copilot
+    participant MCP as AutoDocBot MCP
+    participant Atlassian
+    participant Confluence
+
+    User->>Copilot: Prozess in normaler Sprache beschreiben
+    Copilot->>MCP: get_confluence_connection
+    alt Atlassian noch nicht verbunden
+        MCP-->>Copilot: signierter Verknüpfungslink
+        User->>Atlassian: OAuth-Zustimmung
+        Atlassian-->>MCP: Authorization Code
+        MCP-->>MCP: Token verschlüsselt je Benutzer speichern
+    end
+    Copilot->>MCP: get_article_styleguide
+    Copilot->>MCP: preview_process_article(ArticleSpec)
+    MCP-->>Copilot: validierte Vorschau und previewId
+    Copilot-->>User: Vorschau und Rückfrage zur Veröffentlichung
+    User->>Copilot: ausdrücklich bestätigen
+    Copilot->>MCP: publish_process_article(previewId, true)
+    MCP->>Confluence: Seite erstellen
+    MCP->>Confluence: SVG als Attachment hochladen
+    MCP->>Confluence: Seite mit eingebettetem Diagramm aktualisieren
+    Confluence-->>User: veröffentlichter Artikel
+```
+
+## Projektstruktur
+
+```text
+.
+├── src/
+│   ├── article/
+│   │   ├── article-spec.ts          # Zod-Schema und fachliche Validierung
+│   │   ├── renderer.ts              # sicheres Confluence-Storage-Rendering
+│   │   ├── styleguide.ts            # Standardregeln und erlaubte Overrides
+│   │   ├── sample-process.ts        # Beispielprozess für lokale Tests
+│   │   └── styleguide-check.ts      # automatisierter Rendering-Check
+│   ├── auth/
+│   │   ├── encrypted-json-store.ts  # AES-256-GCM Token Store
+│   │   ├── mcp-identity.ts          # Entra-JWT-Prüfung
+│   │   └── store-check.ts           # Verschlüsselungstest
+│   ├── diagram/
+│   │   └── process-svg.ts           # deterministische SVG-Erzeugung
+│   ├── mcp/
+│   │   └── test-client.ts           # lokaler MCP-Protokolltest
+│   └── server.ts                    # HTTP, OAuth, MCP und Publishing-Pipeline
+├── docs/styleguide.md               # lesbare Styleguide-Dokumentation
+├── azure/containerapp-volume.yaml   # Beispiel für Azure File Mount und Runtime
+├── Dockerfile                       # Multi-Stage-Produktionsimage
+├── .env.example                     # Konfigurationsvorlage
+└── package.json
+```
+
+## Voraussetzungen
+
+- Node.js 24 oder eine kompatible aktuelle Node.js-Version
+- npm
+- eine Atlassian-Cloud-Site mit Confluence
+- Berechtigung, in mindestens einem Confluence-Space Seiten und Attachments anzulegen
+- eine Atlassian OAuth-2.0-App
+- für den produktiven Copilot-Betrieb: Microsoft-Entra-App-Registrierungen
+- für Azure: Azure CLI, eine Subscription und Berechtigungen für Container Apps, ACR, Storage und Log Analytics
+
+## Lokale Einrichtung
+
+### 1. Repository klonen
 
 ```bash
+git clone https://github.com/DWProv/AutoDocBot-V2.git
+cd AutoDocBot-V2
+npm ci
+```
+
+### 2. Konfiguration anlegen
+
+```bash
+cp .env.example .env
+```
+
+Mindestens diese Werte müssen in `.env` gesetzt werden:
+
+```dotenv
+ATLASSIAN_CLIENT_ID=your-atlassian-client-id
+ATLASSIAN_CLIENT_SECRET=your-atlassian-client-secret
+ATLASSIAN_SITE_URL=https://your-site.atlassian.net
+ATLASSIAN_SPACE_ID=your-confluence-space-id
+ATLASSIAN_REDIRECT_URI=http://localhost:3000/oauth/callback
+AUTH_MODE=local
+LOCAL_USER_ID=local:developer
+PUBLIC_BASE_URL=http://localhost:3000
+```
+
+Die `.env`-Datei wird von Git ignoriert und darf nicht committed werden.
+
+### 3. Entwicklungsserver starten
+
+```bash
+npm run dev
+```
+
+Danach `http://localhost:3000` öffnen und **Mit Atlassian verbinden** wählen. Nach erfolgreicher Zustimmung zeigt die Seite den Atlassian-Benutzer, die Cloud-ID, verfügbare Spaces und den Refresh-Token-Status an.
+
+Für einen produktionsnahen lokalen Start:
+
+```bash
+npm run build
+npm run start:prod
+```
+
+## Atlassian-App konfigurieren
+
+In der Atlassian Developer Console wird eine OAuth-2.0-(3LO)-App benötigt.
+
+### Callback URL
+
+Lokal muss die Callback URL exakt mit `.env` übereinstimmen:
+
+```text
+http://localhost:3000/oauth/callback
+```
+
+Für Azure beziehungsweise eine andere öffentliche Umgebung:
+
+```text
+https://YOUR_PUBLIC_HOST/oauth/callback
+```
+
+Schon ein abweichender Slash oder eine andere Domain führt zu einem OAuth-Fehler.
+
+### Benötigte Scopes
+
+Folgende Scopes müssen in der Atlassian-App tatsächlich aktiviert sein:
+
+```text
+read:me
+read:space:confluence
+read:page:confluence
+write:page:confluence
+read:content-details:confluence
+read:attachment:confluence
+write:attachment:confluence
+offline_access
+```
+
+`offline_access` ist für Refresh Tokens erforderlich. Die Attachment-Scopes werden benötigt, weil das Diagramm als SVG-Datei hochgeladen und anschließend in die Seite eingebettet wird.
+
+### Ziel-Site und Space
+
+`ATLASSIAN_SITE_URL` enthält nur die Site-URL ohne `/wiki`, zum Beispiel:
+
+```text
+https://example.atlassian.net
+```
+
+`ATLASSIAN_SPACE_ID` ist die numerische Space-ID, nicht der Space-Key. Beim OAuth-Callback prüft AutoDocBot, ob die erwartete Site freigegeben wurde. Beim Publishing wird zusätzlich geprüft, ob der ausgewählte Space in der für den Benutzer geladenen Space-Liste enthalten ist.
+
+## Konfiguration
+
+| Variable | Erforderlich | Bedeutung |
+|---|---:|---|
+| `ATLASSIAN_CLIENT_ID` | ja | Client-ID der Atlassian-3LO-App |
+| `ATLASSIAN_CLIENT_SECRET` | ja | Secret der Atlassian-3LO-App |
+| `ATLASSIAN_SITE_URL` | ja | Ziel-Site ohne abschließendes `/wiki` |
+| `ATLASSIAN_SPACE_ID` | ja | standardmäßig verwendete Confluence-Space-ID |
+| `ATLASSIAN_REDIRECT_URI` | ja | exakt registrierte Atlassian Callback URL |
+| `PORT` | nein | HTTP-Port, Standard `3000` |
+| `HOST` | nein | Bind-Adresse; lokal `127.0.0.1`, im Container `0.0.0.0` |
+| `AUTH_MODE` | nein | `local` oder `entra`; Standard `local` |
+| `LOCAL_USER_ID` | lokal | lokale Testidentität |
+| `ENTRA_TENANT_ID` | Entra | Tenant-ID, deren Tokens akzeptiert werden |
+| `ENTRA_CLIENT_ID` | Entra | Client-ID/Audience der AutoDocBot-API |
+| `ENTRA_REQUIRED_SCOPE` | Entra | delegierter Scope, Standard `access_as_user` |
+| `ENTRA_ALLOWED_CLIENT_IDS` | Entra | kommaseparierte Allowlist aufrufender Clients, z. B. Copilot-App |
+| `PUBLIC_BASE_URL` | produktiv | öffentliche Basis-URL ohne abschließenden Slash |
+| `ALLOWED_HOSTS` | nein | zusätzliche, kommaseparierte erlaubte Host-Header |
+| `AUTH_LINK_SECRET` | produktiv | Signaturschlüssel für Benutzer-Kontoverknüpfungslinks |
+| `TOKEN_ENCRYPTION_KEY` | Entra | Base64-kodierter Schlüssel mit exakt 32 Byte |
+| `TOKEN_STORE_PATH` | nein | Pfad zum verschlüsselten Verbindungsspeicher |
+
+Geeignete Produktionsschlüssel lassen sich beispielsweise so erzeugen:
+
+```bash
+openssl rand -base64 32  # TOKEN_ENCRYPTION_KEY
+openssl rand -base64 48  # AUTH_LINK_SECRET
+```
+
+Die Werte gehören in einen Secret Store beziehungsweise in Container-App-Secrets, nicht in YAML oder Git.
+
+## MCP-Tools
+
+Der Streamable-HTTP-Endpunkt befindet sich unter `/mcp` und akzeptiert `POST`.
+
+| Tool | Verändernd | Zweck |
+|---|---:|---|
+| `get_confluence_connection` | nein | prüft die Benutzerverbindung und liefert erlaubte Spaces oder einen signierten Atlassian-Verknüpfungslink |
+| `get_article_styleguide` | nein | liefert Standardstil, erlaubte Anpassungen, feste Regeln und Agentenanweisungen |
+| `preview_process_article` | nein | validiert ein `ArticleSpec`, rendert Diagramm-Metadaten und erzeugt eine 30 Minuten gültige Vorschau-ID |
+| `publish_process_article` | ja | veröffentlicht genau eine bestätigte Vorschau inklusive SVG-Diagramm |
+
+### Vorgesehene Tool-Reihenfolge
+
+1. `get_confluence_connection`
+2. gegebenenfalls Atlassian-Verknüpfung durch den Benutzer
+3. `get_article_styleguide`
+4. fachliche Rückfragen stellen, bis keine relevanten Angaben fehlen
+5. `preview_process_article`
+6. Vorschau anzeigen und ausdrückliche Bestätigung einholen
+7. `publish_process_article` mit `confirmed: true`
+
+Der Agent darf `publish_process_article` nicht automatisch direkt nach der Vorschau aufrufen.
+
+## ArticleSpec und Styleguide
+
+Der Copilot erzeugt keinen fertigen HTML-Artikel. Stattdessen sendet er strukturierte Daten an den MCP-Server. Das verhindert, dass Benutzertext ungeprüft als Confluence-Markup ausgeführt wird.
+
+Ein verkürztes Beispiel:
+
+```json
+{
+  "title": "Onboarding neuer Mitarbeitender",
+  "summary": "Der Prozess beschreibt die Vorbereitung eines Neueintritts.",
+  "purpose": "Konten und Arbeitsmittel stehen am ersten Arbeitstag bereit.",
+  "scope": "Der Prozess gilt für neue interne Mitarbeitende.",
+  "roles": [
+    {
+      "name": "HR",
+      "responsibility": "Meldet den Eintritt vollständig und fristgerecht."
+    },
+    {
+      "name": "IT",
+      "responsibility": "Erstellt das Konto und bereitet den Laptop vor."
+    }
+  ],
+  "prerequisites": ["Die erforderlichen Personaldaten liegen vor."],
+  "steps": [
+    {
+      "number": 1,
+      "actor": "HR",
+      "action": "HR meldet den Eintritt mindestens fünf Arbeitstage vorher an die IT.",
+      "result": "Die IT hat die Onboarding-Anfrage erhalten.",
+      "decision": "Sind alle Pflichtangaben vorhanden?"
+    }
+  ],
+  "exceptions": [
+    {
+      "condition": "Pflichtangaben fehlen.",
+      "handling": "Die IT gibt die Anfrage zur Ergänzung an HR zurück."
+    }
+  ],
+  "relatedLinks": [],
+  "metadata": {
+    "owner": "HR und IT"
+  },
+  "optionalContent": {},
+  "style": {
+    "tone": "concise",
+    "audience": "operations",
+    "diagramDirection": "top-down"
+  }
+}
+```
+
+Die vollständige Feldvalidierung steht in `src/article/article-spec.ts`. Unter anderem gelten folgende Grenzen:
+
+- Titel: 5 bis 140 Zeichen
+- mindestens eine Rolle und ein Prozessschritt
+- maximal 30 Rollen, 50 Schritte und 30 Ausnahmen
+- Schrittnummern beginnen bei 1 und müssen lückenlos sein
+- URLs werden validiert
+- unbekannte oder unzulässige Style-Overrides werden abgelehnt
+
+### Verbindliche Styleguide-Regeln
+
+- Sprache `de-DE`
+- keine erfundenen Fakten
+- aktive Sprache
+- explizite Rollen
+- eine Hauptaktion pro Schritt
+- kein Benutzer-HTML oder direktes Confluence-Markup
+- Diagramm immer als letzter fachlicher Abschnitt
+
+### Erlaubte Benutzeranpassungen
+
+- Ton: `formal`, `neutral`, `concise`, `friendly`
+- Zielgruppe: `general`, `expert`, `management`, `operations`
+- Detailgrad: `compact`, `standard`, `detailed`
+- Anrede: `neutral`, `du`, `sie`
+- Diagrammrichtung: `top-down`, `left-right`
+- optionale Abschnitte: Definitionen, Systeme, Risiken/Kontrollen, Kennzahlen, Änderungshistorie
+- Terminologie-Ersetzungen und alternative Überschriften
+
+Weitere Beispiele enthält [`docs/styleguide.md`](docs/styleguide.md).
+
+## Authentifizierung und Sicherheit
+
+### Lokaler Modus
+
+`AUTH_MODE=local` ist ausschließlich für Entwicklung gedacht. Ohne Header verwendet der Server `LOCAL_USER_ID`; über `x-autodoc-user-id` kann der Testclient eine andere lokale Identität simulieren. Dieser Modus darf nicht offen im Internet betrieben werden.
+
+### Entra-Modus
+
+`AUTH_MODE=entra` erwartet am MCP-Endpunkt ein Bearer Access Token und prüft:
+
+- RS256-Signatur über die Microsoft-JWKs
+- Entra-v2-Issuer des konfigurierten Tenants
+- Audience der AutoDocBot-API
+- Tenant Claim `tid`
+- Benutzerobjekt `oid`
+- delegierten Scope in `scp`
+- Ausschluss reiner App-Tokens
+- aufrufende Client-ID über `azp` beziehungsweise `appid`
+- Client-ID gegen `ENTRA_ALLOWED_CLIENT_IDS`
+
+Der Benutzer-Schlüssel im Token Store wird aus `tenantId:objectId` gebildet. Dadurch sind Atlassian-Verbindungen verschiedener Benutzer logisch getrennt.
+
+### Atlassian-Kontoverknüpfung
+
+Im Entra-Modus kann `/oauth/start` nicht frei aufgerufen werden. `get_confluence_connection` erzeugt einen zeitlich begrenzten, signierten Link, der die aktuelle MCP-Benutzeridentität bindet. OAuth-State und Link sind jeweils nur begrenzt gültig.
+
+### Token Store
+
+- jede gespeicherte Verbindung wird separat mit AES-256-GCM verschlüsselt
+- zufälliger IV und Authentifizierungs-Tag je Datensatz
+- atomisches Schreiben über eine temporäre Datei
+- Dateirechte `0600`, Verzeichnisrechte `0700`
+- ablaufende Atlassian Access Tokens werden über den Refresh Token erneuert
+- im lokalen Modus entsteht der ignorierte Schlüssel `.local/token-encryption.key`
+- im Entra-Modus ist ein extern bereitgestellter `TOKEN_ENCRYPTION_KEY` zwingend
+
+Wichtig: Wer sowohl die verschlüsselte Datei als auch den Verschlüsselungsschlüssel besitzt, kann die Tokens entschlüsseln. Beide Komponenten müssen getrennt geschützt und gesichert werden.
+
+## Copilot Studio anbinden
+
+Für den produktiven Zugriff werden typischerweise zwei Entra-App-Registrierungen verwendet.
+
+### 1. API-App für AutoDocBot
+
+1. App-Registrierung für die MCP-API anlegen.
+2. Unter **Expose an API** eine Application ID URI konfigurieren, üblicherweise `api://<API-CLIENT-ID>`.
+3. Delegierten Scope `access_as_user` anlegen.
+4. Tenant-ID und API-Client-ID als `ENTRA_TENANT_ID` und `ENTRA_CLIENT_ID` konfigurieren.
+
+Der vollständige Scope lautet dann:
+
+```text
+api://<API-CLIENT-ID>/access_as_user
+```
+
+### 2. Client-App für Copilot
+
+1. separate App-Registrierung für Copilot anlegen
+2. Client Secret erstellen und sicher speichern
+3. die delegierte API-Berechtigung `access_as_user` der AutoDocBot-API hinzufügen
+4. falls durch die Organisation gefordert, Admin Consent erteilen
+5. die Client-ID in `ENTRA_ALLOWED_CLIENT_IDS` aufnehmen
+6. die von Copilot Studio angezeigte Redirect URL als Web-Redirect-URI registrieren
+
+### 3. OAuth-Werte in Copilot Studio
+
+```text
+Authorization URL:
+https://login.microsoftonline.com/<TENANT-ID>/oauth2/v2.0/authorize
+
+Token URL:
+https://login.microsoftonline.com/<TENANT-ID>/oauth2/v2.0/token
+
+Scope:
+openid profile offline_access api://<API-CLIENT-ID>/access_as_user
+
+MCP endpoint:
+https://<PUBLIC-HOST>/mcp
+```
+
+Je nach aktueller Copilot-Studio-Oberfläche heißen die Felder leicht anders. Entscheidend sind der delegierte Scope, der richtige Client und die korrekte Redirect URL.
+
+### Empfohlene Agentenanweisung
+
+```text
+Prüfe zuerst die Confluence-Verbindung und rufe anschließend den Styleguide ab.
+Strukturiere ausschließlich Fakten aus dem Benutzertext. Frage bei fehlenden
+fachlichen Angaben nach und erfinde keine Rollen, Systeme, Fristen oder Ausnahmen.
+Erzeuge immer zuerst eine Vorschau. Veröffentliche erst, wenn der Benutzer die
+konkrete Vorschau ausdrücklich bestätigt hat. Übergib diese Bestätigung als
+confirmed=true an publish_process_article.
+```
+
+## Container und Azure-Deployment
+
+### Docker lokal
+
+```bash
+docker build -t autodocbot-v2:0.1.0 .
+docker run --rm -p 3000:3000 --env-file .env autodocbot-v2:0.1.0
+```
+
+Das Multi-Stage-Dockerfile kompiliert TypeScript im Build-Image und übernimmt nur Produktionsabhängigkeiten sowie `dist/` in das Runtime-Image. Der Prozess läuft als unprivilegierter Benutzer `node`.
+
+### Benötigte Azure-Ressourcen
+
+- Azure Container Registry für das Image
+- Azure Container Apps Environment
+- Azure Container App mit externer HTTPS-Ingress-Regel auf Port 3000
+- Storage Account und Azure File Share für `connections.json`
+- Log Analytics Workspace
+- verwaltete Identität der Container App mit Pull-Zugriff auf die Registry
+
+Ein beispielhafter Aufbau:
+
+```bash
+RG=your-resource-group
+LOCATION=westeurope
+ACR=youruniqueregistry
+STORAGE=youruniquestorage
+ENVIRONMENT=cae-autodocbot-v2
+APP=autodocbot-v2
+
+az acr create -g "$RG" -n "$ACR" --sku Basic --admin-enabled false
+az storage account create -g "$RG" -n "$STORAGE" -l "$LOCATION" --sku Standard_LRS --min-tls-version TLS1_2
+az storage share-rm create -g "$RG" --storage-account "$STORAGE" --name autodocbot-tokenstore --quota 1
+az containerapp env create -g "$RG" -n "$ENVIRONMENT" -l "$LOCATION"
+az acr build -r "$ACR" -t autodocbot-v2:0.1.0 .
+```
+
+Danach wird der File Share im Container-Apps-Environment registriert:
+
+```bash
+STORAGE_KEY=$(az storage account keys list -g "$RG" -n "$STORAGE" --query '[0].value' -o tsv)
+
+az containerapp env storage set \
+  -g "$RG" \
+  -n "$ENVIRONMENT" \
+  --storage-name tokenstore \
+  --access-mode ReadWrite \
+  --azure-file-account-name "$STORAGE" \
+  --azure-file-account-key "$STORAGE_KEY" \
+  --azure-file-share-name autodocbot-tokenstore
+```
+
+Die Container App benötigt anschließend:
+
+- Image `<ACR>.azurecr.io/autodocbot-v2:0.1.0`
+- externe Ingress-Regel, Zielport `3000`
+- `AUTH_MODE=entra`
+- alle Entra- und Atlassian-Werte aus der Konfigurationstabelle
+- Secrets für `ATLASSIAN_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY` und `AUTH_LINK_SECRET`
+- `TOKEN_STORE_PATH=/data/connections.json`
+- Azure-File-Mount `tokenstore` auf `/data`
+- für diesen PoC genau eine Replica, weil Vorschauen und OAuth-State im Arbeitsspeicher liegen
+
+[`azure/containerapp-volume.yaml`](azure/containerapp-volume.yaml) zeigt die erwarteten Environment- und Volume-Strukturen. Vor der Verwendung müssen alle `YOUR_...`-Platzhalter und der Registry-Name ersetzt werden. Geheimniswerte werden als Container-App-Secrets angelegt und nur über `secretRef` referenziert.
+
+Nach dem Deployment müssen `PUBLIC_BASE_URL`, `ALLOWED_HOSTS` und `ATLASSIAN_REDIRECT_URI` den tatsächlichen Container-App-Host enthalten. Anschließend ist dieselbe öffentliche Callback URL auch in der Atlassian Developer Console einzutragen.
+
+### Deployment prüfen
+
+```bash
+curl https://<PUBLIC-HOST>/healthz
+curl https://<PUBLIC-HOST>/.well-known/oauth-protected-resource
+```
+
+Ein nicht authentifizierter `POST` auf `/mcp` muss im Entra-Modus mit `401` und einem `WWW-Authenticate`-Header antworten. Ein öffentlich erreichbares MCP ohne Authentifizierung ist kein erfolgreicher Produktionscheck.
+
+## Tests und Qualitätsprüfungen
+
+```bash
+npm run typecheck
+npm run build
+npm run check:styleguide
 npm run check:token-store
 ```
 
-## Container
+Der MCP-Test benötigt einen laufenden lokalen Server auf Port 3000:
 
-Das Multi-Stage-Dockerfile kompiliert TypeScript und startet nur die Produktionsabhängigkeiten. Der Container lauscht auf Port 3000 und stellt `GET /healthz` bereit. `.env`, lokale Tokens und Git-Daten werden nicht in das Image kopiert.
+```bash
+npm run dev
+# in einem zweiten Terminal
+npm run test:mcp
+```
+
+`test:mcp` prüft Tool Discovery, Verbindungsstatus und Vorschauerzeugung. Der Test veröffentlicht keine Confluence-Seite.
+
+| Script | Prüfung |
+|---|---|
+| `npm run typecheck` | TypeScript ohne Ausgabe kompilierbar |
+| `npm run build` | Produktionsartefakte in `dist/` erzeugen |
+| `npm run check:styleguide` | ArticleSpec, Overrides, Terminologie, sicheres Rendering und Diagrammposition |
+| `npm run check:token-store` | Verschlüsselung, erneutes Laden und Löschen des Stores |
+| `npm run test:mcp` | MCP-Verbindung, erwartete Tools und nicht publizierende Vorschau |
+
+## HTTP-Endpunkte
+
+| Methode | Pfad | Zweck |
+|---|---|---|
+| `GET` | `/healthz` | Healthcheck und aktiver Auth-Modus |
+| `GET` | `/.well-known/oauth-protected-resource` | OAuth Protected Resource Metadata im Entra-Modus |
+| `POST` | `/mcp` | MCP Streamable HTTP |
+| `GET` | `/` | lokale PoC-Startseite |
+| `GET` | `/oauth/start` | Atlassian-3LO starten |
+| `GET` | `/oauth/callback` | Atlassian OAuth Callback |
+| `POST` | `/create-test-page` | lokale manuelle Testseite |
+| `POST` | `/create-diagram-page` | lokale Diagramm-Testseite |
+| `GET` | `/article-preview` | lokale Beispielvorschau |
+| `POST` | `/publish-article` | lokale Veröffentlichung der Beispielvorschau |
+
+Die manuellen HTML-Testendpunkte sind PoC-Hilfen. Für die Copilot-Integration ist ausschließlich `/mcp` vorgesehen.
+
+## Fehlerbehebung
+
+### Atlassian meldet nicht aktivierte Scopes
+
+Die Scopes müssen nicht nur im Authorization Request stehen, sondern in der Developer Console bei der richtigen API aktiviert sein. Besonders häufig fehlen `read:page:confluence`, `write:page:confluence` oder `read:space:confluence`. Nach Scope-Änderungen ist eine erneute Zustimmung erforderlich.
+
+### `Could not create content with type page`
+
+AutoDocBot verwendet die Confluence REST API v2 und sendet beim Erstellen `spaceId`, `status`, `title` und `body`. Bei eigenen Erweiterungen darf nicht das alte v1-Format mit einem ungeeigneten Content-Type-Payload vermischt werden.
+
+### OAuth Callback oder State ungültig
+
+- Callback URL in Atlassian und `ATLASSIAN_REDIRECT_URI` exakt vergleichen
+- OAuth innerhalb von zehn Minuten abschließen
+- Server während des OAuth-Flows nicht neu starten
+- im Entra-Modus den Link aus `get_confluence_connection` verwenden
+
+### MCP antwortet mit `401 invalid_token`
+
+Prüfen:
+
+- Access Token statt ID Token gesendet
+- Audience entspricht `ENTRA_CLIENT_ID`
+- `scp` enthält `ENTRA_REQUIRED_SCOPE`
+- `tid` entspricht `ENTRA_TENANT_ID`
+- `azp`/`appid` steht in `ENTRA_ALLOWED_CLIENT_IDS`
+- Token stammt vom v2.0-Issuer des richtigen Tenants
+
+### MCP antwortet mit `403 Invalid Host header`
+
+`PUBLIC_BASE_URL` muss dem aufgerufenen Host entsprechen. Zusätzliche Reverse-Proxy-Hosts können kommasepariert über `ALLOWED_HOSTS` freigegeben werden.
+
+### `TOKEN_ENCRYPTION_KEY muss 32 Byte ... enthalten`
+
+Der dekodierte Wert muss exakt 32 Byte lang sein. Einen passenden Wert erzeugt `openssl rand -base64 32`.
+
+### Verbindung verschwindet nach Container-Neustart
+
+Prüfen, ob `TOKEN_STORE_PATH=/data/connections.json` gesetzt und ein beschreibbarer Azure File Share auf `/data` gemountet ist. Außerdem muss nach einem Neustart derselbe `TOKEN_ENCRYPTION_KEY` verwendet werden.
+
+### Seite wird erstellt, Diagramm fehlt
+
+Die Veröffentlichung erfolgt in drei API-Schritten: Seite erstellen, SVG hochladen, Seite aktualisieren. Prüfe Attachment-Scopes, Schreibrechte, Container-Logs und eine mögliche Teilstörung zwischen diesen Schritten.
+
+### Autor ist nicht der erwartete Benutzer
+
+AutoDocBot verwendet das Atlassian-3LO-Token der zugehörigen MCP-Benutzeridentität. Prüfe, welches Atlassian-Konto den Verknüpfungsdialog bestätigt hat. Die Publishing-Antwort enthält zusätzlich `attributionConfirmed`, sofern Confluence die Author-ID der neuen Version liefert.
+
+## Bekannte PoC-Grenzen
+
+- Vorschauen und OAuth-State liegen im Arbeitsspeicher. Ein Neustart macht sie ungültig.
+- Mehrere Replicas benötigen einen gemeinsamen Store für Vorschauen und OAuth-State; deshalb läuft der aktuelle PoC mit einer Replica.
+- Die Publishing-Pipeline ist nicht transaktional. Ein Fehler beim Attachment kann eine bereits angelegte Seite ohne fertiges Diagramm hinterlassen.
+- Der Seitentitel erhält aktuell den Zusatz `– PoC <Zeitstempel>`.
+- Die Liste erlaubter Spaces wird beim Atlassian-Login geladen und ist nicht unbegrenzt paginiert.
+- Es gibt noch keine Benutzeroberfläche zur Verwaltung oder zum Widerruf gespeicherter Verbindungen.
+- Styleguide und ArticleSpec sind im Code versioniert; eine mandantenfähige Konfigurationsverwaltung ist noch nicht umgesetzt.
+- Monitoring, Alerting, Rate-Limit-Behandlung, Backups und automatisierte Deployment-Pipelines müssen vor einem Produktivbetrieb ergänzt werden.
+
+## Weiterentwicklung
+
+Sinnvolle nächste Schritte:
+
+1. Copilot-Studio-MCP-Verbindung gegen die öffentliche Entra-geschützte URL abschließen.
+2. Vorschau- und OAuth-State in Redis oder einer Datenbank persistieren.
+3. idempotente Publishing-Jobs mit Fehlerstatus und Wiederaufnahme einführen.
+4. Styleguides pro Organisation oder Space versionieren.
+5. Audit-Events ohne Token- oder Inhaltslecks protokollieren.
+6. automatisierte Unit-, Integrations- und End-to-End-Tests ergänzen.
+7. Infrastructure as Code und CI/CD aufbauen.
+
+## Lizenz
+
+Für dieses Repository ist derzeit keine Lizenzdatei hinterlegt. Ohne Lizenz bleiben die gesetzlichen Standardrechte beim Urheber. Vor einer externen Wiederverwendung sollte eine passende Open-Source- oder proprietäre Lizenz festgelegt werden.
