@@ -107,6 +107,9 @@ Dadurch erhält AutoDocBot weder ein globales Confluence-Servicekonto noch die B
 
 ## ELI5-Glossar
 
+<details>
+<summary><strong>Zentrale AutoDocBot-Konzepte einfach erklärt</strong></summary>
+
 Dieses Glossar erklärt die zentralen Spezialbegriffe des Projekts bewusst
 vereinfacht. Allgemeine Grundlagen wie HTTP, API, JSON, Git oder Docker werden
 nicht erneut erläutert.
@@ -136,6 +139,8 @@ Vertiefende Erklärungen stehen in den Abschnitten
 [Authentifizierung und Sicherheit](#authentifizierung-und-sicherheit),
 [ArticleSpec und Styleguide](#articlespec-und-styleguide) sowie
 [Bekannte PoC-Grenzen](#bekannte-poc-grenzen).
+
+</details>
 
 ## Ablauf aus Benutzersicht
 
