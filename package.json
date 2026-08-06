@@ -1,6 +1,6 @@
 {
   "name": "autodocbot-v2",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "check:styleguide": "tsx src/article/styleguide-check.ts",
     "check:quality-review": "tsx src/article/quality-review-check.ts",
+    "check:account-link": "tsx src/auth/account-link-check.ts",
     "test:mcp": "tsx src/mcp/test-client.ts",
     "check:token-store": "tsx src/auth/store-check.ts"
   },

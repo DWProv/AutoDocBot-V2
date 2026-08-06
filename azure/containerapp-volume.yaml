@@ -2,7 +2,7 @@ properties:
   template:
     containers:
       - name: autodocbot-v2
-        image: YOUR_ACR_NAME.azurecr.io/autodocbot-v2:0.1.4
+        image: YOUR_ACR_NAME.azurecr.io/autodocbot-v2:0.1.5
         env:
           - name: HOST
             value: 0.0.0.0

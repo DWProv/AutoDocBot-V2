@@ -2,7 +2,7 @@
 
 AutoDocBot V2 ist ein End-to-End-verifizierter Proof of Concept für einen Copilot-Agenten, der frei formulierte Prozessbeschreibungen in konsistente Confluence-Prozessartikel umwandelt. Der Agent strukturiert den Inhalt, wendet einen verbindlichen und zugleich anpassbaren Styleguide an, erzeugt ein SVG-Prozessdiagramm und veröffentlicht den bestätigten Artikel über einen MCP-Server im Namen des angemeldeten Atlassian-Benutzers.
 
-> Aktueller Stand: Version `0.1.4`. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, Copilot Studio, semantische Vorprüfung, automatische Strukturreparatur, verschlüsselte Benutzerverbindungen, Azure Container Apps sowie die bestätigte Veröffentlichung eines Artikels mit SVG-Diagramm wurden praktisch verifiziert.
+> Aktueller Stand: Version `0.1.5`. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, Copilot Studio, semantische Vorprüfung, agentengesteuerte Strukturreparatur, verschlüsselte Benutzerverbindungen, ein fest begrenzter Ziel-Space, einmal verwendbare Kontoverknüpfungslinks, Azure Container Apps sowie die bestätigte Veröffentlichung eines Artikels mit SVG-Diagramm wurden praktisch verifiziert.
 
 ## Inhaltsverzeichnis
 
@@ -20,6 +20,7 @@ AutoDocBot V2 ist ein End-to-End-verifizierter Proof of Concept für einen Copil
 - [ArticleSpec und Styleguide](#articlespec-und-styleguide)
 - [Authentifizierung und Sicherheit](#authentifizierung-und-sicherheit)
 - [Copilot Studio anbinden](#copilot-studio-anbinden)
+- [Agent bereitstellen und Benutzerzugriff](#agent-bereitstellen-und-benutzerzugriff)
 - [Container und Azure-Deployment](#container-und-azure-deployment)
 - [Tests und Qualitätsprüfungen](#tests-und-qualitätsprüfungen)
 - [HTTP-Endpunkte](#http-endpunkte)
@@ -50,14 +51,14 @@ Der Copilot-Agent übernimmt daraus folgende Aufgaben:
 - vier klar getrennte MCP-Tools für Verbindung, Styleguide, Vorschau und Veröffentlichung
 - Atlassian OAuth 2.0 (3LO) mit Benutzerdelegation und Refresh Tokens
 - Veröffentlichung unter der Identität des verbundenen Atlassian-Benutzers
-- Ziel-Site- und Space-Prüfung vor der Veröffentlichung
+- Ziel-Site-Prüfung und ausschließliche Veröffentlichung im fest konfigurierten Ziel-Space
 - strukturierte, mit Zod validierte Artikeldaten
 - deterministisches Confluence-Storage-Format statt ungeprüftem Modell-HTML
 - flexibler Styleguide mit unveränderbaren Sicherheits- und Qualitätsregeln
 - Diagramme in den Richtungen `top-down` und `left-right`
-- Vorschau vor jeder Veröffentlichung; Vorschau-IDs sind 30 Minuten gültig und nur einmal verwendbar
+- Vorschau vor jeder Veröffentlichung; Vorschau-IDs sind 30 Minuten gültig und nur für einen Veröffentlichungsversuch verwendbar
 - fachliche Seitentitel ohne technischen PoC- oder Zeitstempel-Zusatz
-- verbindliche MCP-Serveranweisungen für Ableitung, Rückfragen, Vorschau und Veröffentlichungsbestätigung
+- zentrale MCP-Agentenanweisungen für Ableitung, Rückfragen, Vorschau und Veröffentlichungsbestätigung
 - Microsoft-Entra-Prüfung für produktive MCP-Aufrufe
 - pro Benutzer getrennte, AES-256-GCM-verschlüsselte Atlassian-Verbindungen
 - Container-Image und persistenter Token Store für Azure Container Apps
@@ -147,6 +148,8 @@ sequenceDiagram
 │   │   ├── sample-process.ts        # Beispielprozess für lokale Tests
 │   │   └── styleguide-check.ts      # automatisierter Rendering-Check
 │   ├── auth/
+│   │   ├── account-link.ts          # signierte, einmal verwendbare Verknüpfungslinks
+│   │   ├── account-link-check.ts    # Manipulations- und Wiederverwendungstest
 │   │   ├── encrypted-json-store.ts  # AES-256-GCM Token Store
 │   │   ├── mcp-identity.ts          # Entra-JWT-Prüfung
 │   │   └── store-check.ts           # Verschlüsselungstest
@@ -169,7 +172,7 @@ sequenceDiagram
 - Node.js 24 oder eine kompatible aktuelle Node.js-Version
 - npm
 - eine Atlassian-Cloud-Site mit Confluence
-- Berechtigung, in mindestens einem Confluence-Space Seiten und Attachments anzulegen
+- Berechtigung, im fest konfigurierten Confluence-Ziel-Space Seiten und Attachments anzulegen
 - eine Atlassian OAuth-2.0-App
 - für den produktiven Copilot-Betrieb: Microsoft-Entra-App-Registrierungen
 - für Azure: Azure CLI, eine Subscription und Berechtigungen für Container Apps, ACR, Storage und Log Analytics
@@ -265,7 +268,16 @@ offline_access
 https://example.atlassian.net
 ```
 
-`ATLASSIAN_SPACE_ID` ist die numerische Space-ID, nicht der Space-Key. Beim OAuth-Callback prüft AutoDocBot, ob die erwartete Site freigegeben wurde. Beim Publishing wird zusätzlich geprüft, ob der ausgewählte Space in der für den Benutzer geladenen Space-Liste enthalten ist.
+`ATLASSIAN_SPACE_ID` ist die numerische Space-ID, nicht der Space-Key. Beim
+OAuth-Callback prüft AutoDocBot, ob die erwartete Site und genau dieser
+Ziel-Space für den Benutzer verfügbar sind. Andernfalls wird die Verbindung
+nicht gespeichert. Das MCP-Publishing akzeptiert keine abweichende Space-ID und
+veröffentlicht ausschließlich in `ATLASSIAN_SPACE_ID`.
+
+Die Einschränkung wird durch AutoDocBot auf Anwendungsebene durchgesetzt. Die
+Atlassian-3LO-Scopes selbst sind nicht auf einen einzelnen Space begrenzt und
+gelten weiterhin im Rahmen der Confluence-Rechte des Benutzers. Deshalb bleiben
+der Schutz des MCP-Servers und seiner Tokens sicherheitsrelevant.
 
 ## Konfiguration
 
@@ -274,7 +286,7 @@ https://example.atlassian.net
 | `ATLASSIAN_CLIENT_ID` | ja | Client-ID der Atlassian-3LO-App |
 | `ATLASSIAN_CLIENT_SECRET` | ja | Secret der Atlassian-3LO-App |
 | `ATLASSIAN_SITE_URL` | ja | Ziel-Site ohne abschließendes `/wiki` |
-| `ATLASSIAN_SPACE_ID` | ja | standardmäßig verwendete Confluence-Space-ID |
+| `ATLASSIAN_SPACE_ID` | ja | einzig zulässige Confluence-Ziel-Space-ID für MCP-Publishing |
 | `ATLASSIAN_REDIRECT_URI` | ja | exakt registrierte Atlassian Callback URL |
 | `PORT` | nein | HTTP-Port, Standard `3000` |
 | `HOST` | nein | Bind-Adresse; lokal `127.0.0.1`, im Container `0.0.0.0` |
@@ -305,10 +317,10 @@ Der Streamable-HTTP-Endpunkt befindet sich unter `/mcp` und akzeptiert `POST`.
 
 | Tool | Verändernd | Zweck |
 |---|---:|---|
-| `get_confluence_connection` | nein | prüft die Benutzerverbindung und liefert erlaubte Spaces oder einen signierten Atlassian-Verknüpfungslink |
+| `get_confluence_connection` | nein | prüft Benutzer, Ziel-Site und fest konfigurierten Ziel-Space oder liefert einen signierten Einmal-Verknüpfungslink |
 | `get_article_styleguide` | nein | liefert Standardstil, erlaubte Anpassungen, feste Regeln und Agentenanweisungen |
 | `preview_process_article` | nein | prüft `sourceText` und `qualityReviewJson`; nur ohne offene Probleme validiert es `articleJson` und erzeugt eine 30 Minuten gültige Vorschau-ID |
-| `publish_process_article` | ja | veröffentlicht genau eine bestätigte Vorschau inklusive SVG-Diagramm |
+| `publish_process_article` | ja | verwendet eine Vorschau genau einmal für einen Veröffentlichungsversuch und schreibt inklusive SVG-Diagramm ausschließlich in den fest konfigurierten Ziel-Space |
 
 ### Vorgesehene Tool-Reihenfolge
 
@@ -320,7 +332,11 @@ Der Streamable-HTTP-Endpunkt befindet sich unter `/mcp` und akzeptiert `POST`.
 6. Vorschau anzeigen und ausdrückliche Bestätigung einholen
 7. `publish_process_article` mit `confirmed: true`
 
-Der Agent darf `publish_process_article` nicht automatisch direkt nach der Vorschau aufrufen.
+Der Agent darf `publish_process_article` nicht automatisch direkt nach der
+Vorschau aufrufen. Der Server verlangt zwar den Literalwert `confirmed: true`,
+kann aber nicht unabhängig prüfen, ob die Bestätigung tatsächlich im Chat
+erteilt wurde. Die korrekte Interpretation der Bestätigung ist im PoC eine
+Agentenregel und keine eigenständige, revisionssichere Freigabe.
 
 ## ArticleSpec und Styleguide
 
@@ -353,9 +369,10 @@ Es wird keine `previewId` erzeugt. Der Agent stellt die gelieferten fachlichen F
 Ist der konsolidierte Prozess fachlich eindeutig, aber `articleJson` noch
 unvollständig, antwortet das Tool nicht mit einem technischen Fehler. Stattdessen
 liefert es `article_structure_retry_required`, konkrete `validationIssues` und
-`requiredArticleShape`. Der Agent repariert die Struktur intern und wiederholt
-den Vorschauaufruf sofort; der Benutzer wird nicht nach Schema- oder
-Pflichtfeldern gefragt.
+`requiredArticleShape`. Der Copilot-Agent versucht daraufhin, die Struktur zu
+reparieren und den Vorschauaufruf zu wiederholen. Der Server liefert dafür einen
+deterministischen Reparaturauftrag, die eigentliche inhaltliche Reparatur bleibt
+jedoch modellgesteuert.
 
 Ein verkürztes Beispiel:
 
@@ -413,15 +430,26 @@ Die vollständige Feldvalidierung steht in `src/article/article-spec.ts`. Unter 
 - URLs werden validiert
 - unbekannte oder unzulässige Style-Overrides werden abgelehnt
 
-### Verbindliche Styleguide-Regeln
+### Technisch erzwungene und agentengesteuerte Regeln
 
-- Sprache `de-DE`
-- keine erfundenen Fakten
-- aktive Sprache
-- explizite Rollen
-- eine Hauptaktion pro Schritt
-- kein Benutzer-HTML oder direktes Confluence-Markup
-- Diagramm immer als letzter fachlicher Abschnitt
+Nicht jede Qualitätsregel kann mit einem Schema oder regulären Ausdruck
+vollständig bewiesen werden. Die folgende Abgrenzung ist deshalb bewusst Teil
+des Sicherheitsmodells:
+
+| Regel | Technisch erzwungen | Agentengesteuert | Einordnung |
+|---|---:|---:|---|
+| ArticleSpec-Pflichtfelder, Typen und Größenlimits | ja | ergänzend | Zod lehnt strukturell ungültige Daten ab |
+| Lückenlose Schrittnummern ab 1 | ja | ergänzend | serverseitige Validierung |
+| Benutzerbindung und Ablauf der Vorschau | ja | nein | Benutzer-ID und Ablaufzeit werden serverseitig geprüft |
+| Ausschließlich fest konfigurierter Ziel-Space | ja | nein | das Publishing-Tool akzeptiert keine andere Space-ID |
+| Kein Benutzer-HTML oder direktes Confluence-Markup | ja | nein | Inhalte werden als Daten validiert und beim Rendering escaped |
+| Diagramm als letzter fachlicher Abschnitt | ja | ergänzend | Reihenfolge wird vom Renderer festgelegt |
+| Erlaubte Style-Overrides | ja | ergänzend | unbekannte Werte und Felder werden abgelehnt |
+| Explizite Rollen | strukturell | ja | mindestens eine Rolle ist Pflicht; fachliche Vollständigkeit bewertet der Agent |
+| Keine erfundenen Fakten | heuristisch | ja | nicht allgemein deterministisch beweisbar |
+| Aktive Sprache und eine Hauptaktion pro Schritt | nein | ja | sprachliche Qualitätsregel |
+| Vollständige Widerspruchserkennung | heuristisch | ja | Serverregeln erkennen typische Muster, aber nicht jede fachliche Inkonsistenz |
+| Ausdrückliche Benutzerbestätigung | teilweise | ja | `confirmed: true` ist Pflicht; der Server sieht jedoch nicht den Chatverlauf |
 
 ### Erlaubte Benutzeranpassungen
 
@@ -472,7 +500,8 @@ Der Agent ruft `get_confluence_connection` auf. Der MCP-Server sucht im
 verschlüsselten Token Store nach einer Atlassian-Verbindung für genau diese
 Microsoft-Benutzeridentität. Existiert noch keine Verbindung, erzeugt er einen
 kurzzeitig gültigen, signierten Autorisierungslink. Dieser Link ist an den
-aktuellen Benutzer gebunden.
+aktuellen Benutzer gebunden und nach dem ersten Öffnen verbraucht. Er bleibt bis
+dahin ein vertrauliches Bearer-Geheimnis und darf nicht weitergegeben werden.
 
 ### 3. Der Benutzer stimmt bei Atlassian zu
 
@@ -566,7 +595,18 @@ Der Benutzer-Schlüssel im Token Store wird aus `tenantId:objectId` gebildet. Da
 
 ### Atlassian-Kontoverknüpfung
 
-Im Entra-Modus kann `/oauth/start` nicht frei aufgerufen werden. `get_confluence_connection` erzeugt einen zeitlich begrenzten, signierten Link, der die aktuelle MCP-Benutzeridentität bindet. OAuth-State und Link sind jeweils nur begrenzt gültig.
+Im Entra-Modus kann `/oauth/start` nicht frei aufgerufen werden.
+`get_confluence_connection` erzeugt einen zeitlich begrenzten, signierten Link,
+der die aktuelle MCP-Benutzeridentität bindet. Der Server führt die ausgegebene
+Nonce im Arbeitsspeicher und verbraucht sie beim ersten Öffnen. OAuth-State und
+Link sind höchstens zehn Minuten gültig; ein Serverneustart macht sie ebenfalls
+ungültig.
+
+Der Einmalmechanismus verhindert eine erneute Verwendung, aber nicht den
+Missbrauch eines vor dem berechtigten Benutzer abgefangenen oder bewusst
+weitergegebenen Links. Der Link muss deshalb wie ein kurzfristiges Passwort
+behandelt werden. Eine zusätzliche Entra-Anmeldung im Browser wäre für einen
+späteren Produktivbetrieb die stärkere Absicherung.
 
 ### Token Store
 
@@ -579,6 +619,32 @@ Im Entra-Modus kann `/oauth/start` nicht frei aufgerufen werden. `get_confluence
 - im Entra-Modus ist ein extern bereitgestellter `TOKEN_ENCRYPTION_KEY` zwingend
 
 Wichtig: Wer sowohl die verschlüsselte Datei als auch den Verschlüsselungsschlüssel besitzt, kann die Tokens entschlüsseln. Beide Komponenten müssen getrennt geschützt und gesichert werden.
+
+### Datenverarbeitung und Speicherung
+
+Die folgende Übersicht trennt die Verarbeitung durch AutoDocBot von der
+Aufbewahrung in angebundenen Plattformen. Für Copilot Studio, Microsoft Entra,
+Azure Log Analytics und Confluence gelten zusätzlich die im jeweiligen
+Kundentenant konfigurierten Aufbewahrungs-, Compliance- und Löschrichtlinien.
+
+| Datenart | Wann und wo entsteht sie? | Wie wird sie verarbeitet? | Speicherung und Dauer | Schutz und Löschung |
+|---|---|---|---|---|
+| Benutzereingabe und Copilot-Unterhaltung | Eingabe im Copilot-Chat; Verarbeitung zunächst durch Microsoft Copilot Studio | Der Agent analysiert den Prozess und erzeugt `sourceText`, `articleJson` und `qualityReviewJson` | Die Gesprächshistorie liegt außerhalb dieses Repositorys gemäß den Tenant-Richtlinien von Copilot Studio; AutoDocBot speichert die ursprüngliche Unterhaltung nicht dauerhaft | Zugriff und Aufbewahrung müssen über Microsoft-/Power-Platform-Richtlinien geregelt werden |
+| Konsolidierter ProzessText und Qualitätsbericht | Bei jedem Aufruf von `preview_process_article` am MCP-Endpunkt | Prüfung auf typische Konflikte sowie Übernahme der Agentenanalyse | Nur während des Requests im Arbeitsspeicher; `sourceText` und Qualitätsbericht werden nicht in den Token Store geschrieben | Mit Ende des Requests verworfen; Inhalte werden nicht absichtlich protokolliert |
+| ArticleSpec, aufgelöster Style und SVG-Vorschau | Nach erfolgreicher Vorschauprüfung im MCP-Server | Validierung, sicheres Rendering und Vorbereitung der Veröffentlichung | 30 Minuten nutzbar; anschließend spätestens mit der minütlichen Bereinigung, beim Veröffentlichungsversuch oder Neustart aus dem Arbeitsspeicher entfernt | An die Entra-Benutzer-ID gebunden; eine Vorschau kann nur für einen Veröffentlichungsversuch verwendet werden |
+| Entra Access Token und Identitätsclaims | Copilot sendet bei jedem MCP-Aufruf einen Bearer-Token | Signatur, Issuer, Audience, Tenant, Benutzer, Scope und Client-ID werden geprüft | Token wird nicht von AutoDocBot persistiert; Claims existieren während der Request-Verarbeitung im Arbeitsspeicher | Transport über HTTPS; keine beabsichtigte Token-Protokollierung |
+| Signierter Atlassian-Verknüpfungslink | `get_confluence_connection` erzeugt ihn bei fehlender Verbindung | HMAC-Prüfung, Benutzerbindung, Ablaufprüfung und einmaliger Verbrauch vor dem Redirect; ein neuer Link ersetzt ältere Links desselben Benutzers | Zehn Minuten nutzbar; Nonce anschließend spätestens mit der minütlichen Bereinigung, beim ersten Öffnen oder Neustart aus dem Arbeitsspeicher entfernt | Vertraulicher Bearer-Link; Weitergabe vor der ersten Nutzung bleibt ein Restrisiko |
+| OAuth-State und Authorization Code | Während des Atlassian-Redirect- und Callback-Ablaufs | State schützt die Zuordnung des Callbacks; Code wird einmalig gegen Tokens getauscht | State zehn Minuten nutzbar und anschließend spätestens mit der minütlichen Bereinigung entfernt; Code wird nicht gespeichert | State wird nach erfolgreichem Callback gelöscht; Neustart macht den Ablauf ungültig |
+| Atlassian Access-/Refresh-Token, Profil, Cloud-ID und Space-Liste | Nach erfolgreicher Atlassian-Zustimmung | API-Aufrufe im Namen des Benutzers; Access Tokens werden bei Bedarf mit dem Refresh Token erneuert | AES-256-GCM-verschlüsselt in `TOKEN_STORE_PATH`, in Azure auf dem persistenten `/data`-Mount; derzeit bis zur manuellen Löschung, Überschreibung oder zum Atlassian-Widerruf | Je Datensatz eigener IV und Authentifizierungs-Tag; Schlüssel separat als Container-App-Secret; noch keine Benutzeroberfläche für Löschung oder Widerruf |
+| Verschlüsselungs- und Anwendungsschlüssel | Bereitstellung als Container-App-Secrets | Entschlüsselung des Token Stores und Signatur der Verknüpfungslinks | Als Azure-Secret und zur Laufzeit als Umgebungsvariable; nicht im Repository oder Token Store | Zugriff über Azure-Rollen begrenzen; Rotation und Wiederherstellung sind derzeit ein manueller Betriebsprozess |
+| Veröffentlichter Artikel und SVG | Nach bestätigtem Publishing über die Confluence APIs | Seite erstellen, SVG anhängen und Seite mit Diagramm aktualisieren | Dauerhaft in der Confluence-Kundenumgebung gemäß deren Aufbewahrungs- und Versionsrichtlinien | Zugriffsrechte und Löschung werden durch Confluence und den Ziel-Space geregelt |
+| Betriebs- und Fehlerlogs | Standardausgabe des Containers beziehungsweise Azure Log Analytics | Startmeldungen und Fehlertexte zur Diagnose; externe API-Fehler können Metadaten oder Antwortdetails enthalten | Dauer nach Konfiguration des Log-Analytics-Workspace; im PoC nicht durch die Anwendung festgelegt | Keine absichtliche Protokollierung von Tokens oder vollständigen Prozessinhalten; Logzugriff und Retention müssen organisatorisch begrenzt werden |
+| Quellcode, Container-Image und Git | Build und Versionierung | Kompilierter Anwendungscode ohne Laufzeitdaten | GitHub und Azure Container Registry gemäß deren Aufbewahrung | `.env`, `.local/`, `/data`, Logs und Token Store sind von Git und Docker-Build-Kontext ausgeschlossen |
+
+Vor einem breiten Produktivbetrieb müssen insbesondere eine verbindliche
+Log-Retention, ein Benutzer-Offboarding, eine Löschfunktion für gespeicherte
+Verbindungen, Secret-Rotation und die zulässigen Datenklassifikationen festgelegt
+werden.
 
 ## Copilot Studio anbinden
 
@@ -639,13 +705,75 @@ Die vollständige kopierfertige Studio-Anweisung steht in
 [`docs/copilot-agent-instructions.md`](docs/copilot-agent-instructions.md). Der
 MCP-Server liefert die zentralen Regeln zusätzlich als MCP-Serveranweisungen aus.
 
+## Agent bereitstellen und Benutzerzugriff
+
+Das Veröffentlichen in Copilot Studio erzeugt zunächst nur eine veröffentlichte
+Version. Damit Benutzer den Agenten tatsächlich öffnen können, muss zusätzlich
+ein Kanal aktiviert und eine Zielgruppe freigegeben werden.
+
+### Kontrollierter Pilotbetrieb
+
+1. In Copilot Studio unter **Kanäle** den Kanal **Teams und Microsoft 365
+   Copilot** öffnen.
+2. Falls gewünscht **Agent in Microsoft 365 Copilot verfügbar machen**
+   aktivieren und den Kanal hinzufügen.
+3. Den Agenten nach Kanal- oder Authentifizierungsänderungen erneut
+   veröffentlichen.
+4. In der Freigabeverwaltung einzelne Benutzer oder vorzugsweise eine
+   Entra-Sicherheitsgruppe als Chat-/Viewer-Zielgruppe hinzufügen.
+5. Unter **Verfügbarkeitsoptionen** den Installationslink kopieren und nur mit
+   dieser Zielgruppe teilen.
+6. Der Benutzer installiert den Agenten in Teams oder Microsoft 365 Copilot und
+   öffnet einen persönlichen Chat.
+7. Beim ersten Prozessaufruf erhält der Benutzer seinen einmal verwendbaren
+   Atlassian-Link und verbindet sein eigenes Konto mit dem fest konfigurierten
+   Ziel-Space.
+
+Der Installationslink erteilt allein keine Berechtigung. Der Benutzer muss
+zusätzlich für den Agenten freigegeben sein. Installationslinks sind für Teams
+Desktop beziehungsweise Web vorgesehen; für eine zuverlässige mobile
+Auffindbarkeit sollte der Agent im organisationsinternen App-/Agent-Store
+bereitgestellt werden.
+
+### Organisationsweite Bereitstellung
+
+Über **Verfügbarkeitsoptionen → Für alle in meiner Organisation anzeigen** kann
+der Agent zur Administratorfreigabe eingereicht werden. Im Microsoft 365 Admin
+Center legt ein Administrator anschließend fest:
+
+- **Available to:** Wer den Agenten finden und selbst installieren darf.
+- **Deployed to:** Für wen der Agent zentral ausgerollt wird.
+
+Für einen ersten Rollout wird eine kleine Pilotgruppe empfohlen. Erst nach
+erfolgreichen Tests von Benutzerzugriff, individueller Atlassian-Autorisierung,
+Ziel-Space-Rechten, Vorschau und Publishing sollte die Zielgruppe erweitert
+werden.
+
+Aktuelle Microsoft-Dokumentation:
+
+- [Agent mit Teams und Microsoft 365 Copilot verbinden](https://learn.microsoft.com/en-us/microsoft-copilot-studio/publication-add-bot-to-microsoft-teams)
+- [Verfügbarkeit für Benutzer und Gruppen steuern](https://learn.microsoft.com/en-us/microsoft-365/copilot/agent-essentials/agent-lifecycle/agent-availability)
+
+### Aktuelle Mandantengrenze
+
+Der PoC ist **Single-Tenant**. Der MCP-Server akzeptiert ausschließlich
+Entra-Tokens aus `ENTRA_TENANT_ID` und nur von Clients aus
+`ENTRA_ALLOWED_CLIENT_IDS`. Zusätzlich ist genau eine Atlassian-Site und ein
+Ziel-Space konfiguriert.
+
+Benutzer aus einem fremden Entra-Tenant können diese Bereitstellung nicht ohne
+weitere Anpassungen verwenden. Für ein Kundenprodukt wären mindestens eine
+Multi-Tenant-Identitätsstrategie oder getrennte Kunden-Deployments,
+mandantenspezifische Atlassian-Konfigurationen, isolierte Secrets und Stores
+sowie ein administratives On-/Offboarding erforderlich.
+
 ## Container und Azure-Deployment
 
 ### Docker lokal
 
 ```bash
-docker build -t autodocbot-v2:0.1.4 .
-docker run --rm -p 3000:3000 --env-file .env autodocbot-v2:0.1.4
+docker build -t autodocbot-v2:0.1.5 .
+docker run --rm -p 3000:3000 --env-file .env autodocbot-v2:0.1.5
 ```
 
 Das Multi-Stage-Dockerfile kompiliert TypeScript im Build-Image und übernimmt nur Produktionsabhängigkeiten sowie `dist/` in das Runtime-Image. Der Prozess läuft als unprivilegierter Benutzer `node`.
@@ -673,7 +801,7 @@ az acr create -g "$RG" -n "$ACR" --sku Basic --admin-enabled false
 az storage account create -g "$RG" -n "$STORAGE" -l "$LOCATION" --sku Standard_LRS --min-tls-version TLS1_2
 az storage share-rm create -g "$RG" --storage-account "$STORAGE" --name autodocbot-tokenstore --quota 1
 az containerapp env create -g "$RG" -n "$ENVIRONMENT" -l "$LOCATION"
-az acr build -r "$ACR" -t autodocbot-v2:0.1.4 .
+az acr build -r "$ACR" -t autodocbot-v2:0.1.5 .
 ```
 
 Danach wird der File Share im Container-Apps-Environment registriert:
@@ -693,7 +821,7 @@ az containerapp env storage set \
 
 Die Container App benötigt anschließend:
 
-- Image `<ACR>.azurecr.io/autodocbot-v2:0.1.4`
+- Image `<ACR>.azurecr.io/autodocbot-v2:0.1.5`
 - externe Ingress-Regel, Zielport `3000`
 - `AUTH_MODE=entra`
 - alle Entra- und Atlassian-Werte aus der Konfigurationstabelle
@@ -722,6 +850,7 @@ npm run typecheck
 npm run build
 npm run check:styleguide
 npm run check:quality-review
+npm run check:account-link
 npm run check:token-store
 ```
 
@@ -741,6 +870,7 @@ npm run test:mcp
 | `npm run build` | Produktionsartefakte in `dist/` erzeugen |
 | `npm run check:styleguide` | ArticleSpec, Overrides, Terminologie, sicheres Rendering und Diagrammposition |
 | `npm run check:quality-review` | explizite Widersprüche, unbestimmte Fristen und fehlende Verantwortlichkeiten |
+| `npm run check:account-link` | Signatur, Ablauf und Einmalnutzung der Atlassian-Kontoverknüpfungslinks |
 | `npm run check:token-store` | Verschlüsselung, erneutes Laden und Löschen des Stores |
 | `npm run test:mcp` | MCP-Verbindung, erwartete Tools und nicht publizierende Vorschau |
 
@@ -759,7 +889,11 @@ npm run test:mcp
 | `GET` | `/article-preview` | lokale Beispielvorschau |
 | `POST` | `/publish-article` | lokale Veröffentlichung der Beispielvorschau |
 
-Die manuellen HTML-Testendpunkte sind PoC-Hilfen. Für die Copilot-Integration ist ausschließlich `/mcp` vorgesehen.
+Die manuellen HTML-Testendpunkte sind PoC-Hilfen und stehen ausschließlich bei
+`AUTH_MODE=local` zur Verfügung. Im Entra-Modus antworten sie einschließlich der
+Startseite `/` mit `404`. Für die Copilot-Integration ist ausschließlich `/mcp`
+vorgesehen; `/oauth/start` und `/oauth/callback` werden nur für die
+Atlassian-Kontoverknüpfung benötigt.
 
 ## Fehlerbehebung
 
@@ -814,11 +948,15 @@ AutoDocBot verwendet das Atlassian-3LO-Token der zugehörigen MCP-Benutzeridenti
 
 - Vorschauen und OAuth-State liegen im Arbeitsspeicher. Ein Neustart macht sie ungültig.
 - Mehrere Replicas benötigen einen gemeinsamen Store für Vorschauen und OAuth-State; deshalb läuft der aktuelle PoC mit einer Replica.
-- Die Publishing-Pipeline ist nicht transaktional. Ein Fehler beim Attachment kann eine bereits angelegte Seite ohne fertiges Diagramm hinterlassen.
+- Eine Vorschau wird vor dem ersten Confluence-Schreibzugriff verbraucht. Ein fehlgeschlagener Publishing-Versuch benötigt deshalb eine neue Vorschau.
+- Die Publishing-Pipeline ist nicht transaktional. Ein Fehler beim Attachment kann eine bereits angelegte Seite ohne fertiges Diagramm hinterlassen; ein erneuter Versuch kann eine zweite Seite erzeugen.
 - Neue Seiten verwenden den fachlichen ArticleSpec-Titel ohne PoC-Zusatz. Ein eigener Aktualisierungs- oder Konfliktablauf für bereits vorhandene gleichnamige Seiten fehlt noch.
-- Die Liste erlaubter Spaces wird beim Atlassian-Login geladen und ist nicht unbegrenzt paginiert.
+- Die Sichtbarkeit des Ziel-Spaces wird beim Atlassian-Login aus den ersten 100 gelieferten Spaces geprüft. Die Liste ist nicht paginiert und spätere Berechtigungsänderungen werden nicht aktiv synchronisiert; Confluence prüft sie beim API-Aufruf erneut.
+- Die ausdrückliche Chatbestätigung ist eine Agentenregel. Der Server verlangt `confirmed: true`, besitzt aber keinen unabhängigen Nachweis des Chatverlaufs.
+- Ein Verknüpfungslink ist einmal verwendbar, bleibt bis zur ersten Nutzung aber ein weiterleitbares Bearer-Geheimnis. Eine zusätzliche Browser-Anmeldung mit Entra ist noch nicht umgesetzt.
 - Es gibt noch keine Benutzeroberfläche zur Verwaltung oder zum Widerruf gespeicherter Verbindungen.
-- Styleguide und ArticleSpec sind im Code versioniert; eine mandantenfähige Konfigurationsverwaltung ist noch nicht umgesetzt.
+- Die Bereitstellung unterstützt genau einen Entra-Tenant, eine Atlassian-Site und einen Ziel-Space. Eine mandantenfähige Konfigurationsverwaltung ist noch nicht umgesetzt.
+- Styleguide und ArticleSpec sind im Code versioniert; organisationsspezifische Versionen sind noch nicht administrierbar.
 - Monitoring, Alerting, Rate-Limit-Behandlung, Backups und automatisierte Deployment-Pipelines müssen vor einem Produktivbetrieb ergänzt werden.
 
 ## Weiterentwicklung

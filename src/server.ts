@@ -1,10 +1,6 @@
 import "dotenv/config";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import {
-  createHmac,
-  randomBytes,
-  timingSafeEqual,
-} from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z, ZodError } from "zod";
@@ -35,6 +31,7 @@ import {
   EncryptedJsonStore,
   loadOrCreateEncryptionKey,
 } from "./auth/encrypted-json-store.js";
+import { OneTimeAccountLinkStore } from "./auth/account-link.js";
 
 type TokenResponse = {
   access_token: string;
@@ -139,6 +136,10 @@ const config = {
     .filter(Boolean),
 };
 
+if (config.authMode === "entra" && !process.env.AUTH_LINK_SECRET) {
+  throw new Error("AUTH_LINK_SECRET ist im Entra-Modus erforderlich.");
+}
+
 const states = new Map<string, { expiresAt: number; userId: string }>();
 const articlePreviews = new Map<
   string,
@@ -150,6 +151,19 @@ const articlePreviews = new Map<
     expiresAt: number;
   }
 >();
+const accountLinks = new OneTimeAccountLinkStore(config.authLinkSecret);
+
+const transientCleanup = setInterval(() => {
+  const now = Date.now();
+  for (const [state, value] of states) {
+    if (value.expiresAt <= now) states.delete(state);
+  }
+  for (const [previewId, value] of articlePreviews) {
+    if (value.expiresAt <= now) articlePreviews.delete(previewId);
+  }
+  accountLinks.purgeExpired();
+}, 60_000);
+transientCleanup.unref();
 const mcpAgentInstructions = [
   "Prüfe vor der Artikelarbeit mit get_confluence_connection, ob der aktuelle Benutzer mit Confluence verbunden ist.",
   "Rufe get_article_styleguide ab und wende den gelieferten Styleguide auf jeden Artikel an.",
@@ -319,48 +333,6 @@ async function getValidConnection(
   return refreshedConnection;
 }
 
-function createAccountLinkToken(userId: string): string {
-  const encodedPayload = Buffer.from(
-    JSON.stringify({
-      userId,
-      expiresAt: Date.now() + 10 * 60 * 1000,
-      nonce: randomBytes(12).toString("base64url"),
-    }),
-  ).toString("base64url");
-  const signature = createHmac("sha256", config.authLinkSecret)
-    .update(encodedPayload)
-    .digest("base64url");
-  return `${encodedPayload}.${signature}`;
-}
-
-function verifyAccountLinkToken(token: string): string {
-  const [encodedPayload, suppliedSignature] = token.split(".");
-  if (!encodedPayload || !suppliedSignature) {
-    throw new Error("Der Kontoverknüpfungs-Link ist ungültig.");
-  }
-  const expectedSignature = createHmac("sha256", config.authLinkSecret)
-    .update(encodedPayload)
-    .digest();
-  const actualSignature = Buffer.from(suppliedSignature, "base64url");
-  if (
-    actualSignature.length !== expectedSignature.length ||
-    !timingSafeEqual(actualSignature, expectedSignature)
-  ) {
-    throw new Error("Die Signatur des Kontoverknüpfungs-Links ist ungültig.");
-  }
-  const payload = JSON.parse(
-    Buffer.from(encodedPayload, "base64url").toString("utf8"),
-  ) as { userId?: unknown; expiresAt?: unknown };
-  if (
-    typeof payload.userId !== "string" ||
-    typeof payload.expiresAt !== "number" ||
-    payload.expiresAt < Date.now()
-  ) {
-    throw new Error("Der Kontoverknüpfungs-Link ist abgelaufen.");
-  }
-  return payload.userId;
-}
-
 function authorizationUrl(userId: string): string {
   const state = randomBytes(32).toString("base64url");
   states.set(state, {
@@ -451,6 +423,14 @@ async function handleCallback(url: URL, response: ServerResponse): Promise<void>
     `https://api.atlassian.com/ex/confluence/${encodeURIComponent(resource.id)}/wiki/api/v2/spaces?limit=100`,
     { headers: authHeaders },
   );
+  const configuredSpace = spaceList.results.find(
+    (space) => space.id === config.spaceId,
+  );
+  if (!configuredSpace) {
+    throw new Error(
+      `Der fest konfigurierte Ziel-Space mit ID ${config.spaceId} ist für diesen Benutzer nicht verfügbar. Die Verbindung wurde nicht gespeichert.`,
+    );
+  }
   connections.set(pendingState.userId, {
     token,
     tokenExpiresAt: Date.now() + token.expires_in * 1000,
@@ -458,25 +438,10 @@ async function handleCallback(url: URL, response: ServerResponse): Promise<void>
     profile,
     spaces: spaceList.results,
   });
-  const configuredSpaceExists = spaceList.results.some(
-    (space) => space.id === config.spaceId,
-  );
-  const spaceOptions = spaceList.results
-    .map(
-      (space) =>
-        `<option value="${escapeHtml(space.id)}" ${space.id === config.spaceId ? "selected" : ""}>${escapeHtml(space.name)} (${escapeHtml(space.key)}, ID ${escapeHtml(space.id)})</option>`,
-    )
-    .join("");
   const localTestControls =
     pendingState.userId === config.localUserId
-      ? `${
-          configuredSpaceExists
-            ? ""
-            : `<p class="error">Die konfigurierte ID <code>${escapeHtml(config.spaceId)}</code> ist keine der für diesen Benutzer sichtbaren Space-IDs. Bitte wähle unten den Ziel-Space aus.</p>`
-        }
-         <form method="post" action="/create-test-page">
-           <p><label for="spaceId"><strong>Ziel-Space</strong></label><br />
-           <select id="spaceId" name="spaceId" required>${spaceOptions}</select></p>
+      ? `<form method="post" action="/create-test-page">
+           <p><strong>Ziel-Space:</strong> ${escapeHtml(configuredSpace.name)} (<code>${escapeHtml(configuredSpace.key)}</code>)</p>
            <button class="button" type="submit">Testseite veröffentlichen</button>
            <button class="button" type="submit" formaction="/create-diagram-page">Testseite mit SVG veröffentlichen</button>
          </form>
@@ -499,15 +464,6 @@ async function handleCallback(url: URL, response: ServerResponse): Promise<void>
      </dl>
      ${localTestControls}`,
   );
-}
-
-function renderSpaceOptions(spaces: ConfluenceSpace[]): string {
-  return spaces
-    .map(
-      (space) =>
-        `<option value="${escapeHtml(space.id)}" ${space.id === config.spaceId ? "selected" : ""}>${escapeHtml(space.name)} (${escapeHtml(space.key)}, ID ${escapeHtml(space.id)})</option>`,
-    )
-    .join("");
 }
 
 function storeArticlePreview(spec: ArticleSpec, userId: string): {
@@ -577,8 +533,7 @@ function showArticlePreview(response: ServerResponse): void {
      <h2>Veröffentlichen</h2>
      <form method="post" action="/publish-article">
        <input type="hidden" name="previewId" value="${escapeHtml(previewId)}" />
-       <p><label for="spaceId"><strong>Ziel-Space</strong></label><br />
-       <select id="spaceId" name="spaceId" required>${renderSpaceOptions(activeSession.spaces)}</select></p>
+       <p><strong>Ziel-Space-ID:</strong> <code>${escapeHtml(config.spaceId)}</code></p>
        <button class="button" type="submit">Vorschau bestätigen und veröffentlichen</button>
      </form>
      <p><a href="/">Abbrechen</a></p>`,
@@ -600,7 +555,6 @@ type PublishedArticle = {
 async function publishStoredPreview(
   previewId: string,
   userId: string,
-  requestedSpaceId?: string,
 ): Promise<PublishedArticle> {
   const activeSession = await getValidConnection(userId);
   if (!activeSession) {
@@ -617,12 +571,11 @@ async function publishStoredPreview(
     throw new Error("Die Artikelvorschau gehört zu einem anderen Benutzer.");
   }
 
-  const effectiveSpaceId = requestedSpaceId ?? config.spaceId;
   const targetSpace = activeSession.spaces.find(
-    (space) => space.id === effectiveSpaceId,
+    (space) => space.id === config.spaceId,
   );
   if (!targetSpace) {
-    throw new Error("Der gewählte Space gehört nicht zu den für diesen Benutzer geladenen Spaces.");
+    throw new Error("Der fest konfigurierte Ziel-Space ist für diesen Benutzer nicht verfügbar.");
   }
   articlePreviews.delete(previewId);
 
@@ -721,7 +674,6 @@ async function publishArticle(
   const result = await publishStoredPreview(
     previewId,
     config.localUserId,
-    form.get("spaceId") ?? undefined,
   );
   sendHtml(
     response,
@@ -742,7 +694,7 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
   const mcp = new McpServer(
     {
       name: "autodocbot-v2",
-      version: "0.1.4",
+      version: "0.1.5",
     },
     { instructions: mcpAgentInstructions },
   );
@@ -752,26 +704,28 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
     {
       title: "Confluence-Verbindung prüfen",
       description:
-        "Prüft vor einer Vorschau oder Veröffentlichung, ob der Benutzer mit Atlassian verbunden ist, und liefert die erlaubten Confluence-Spaces. Dieses Tool verändert keine Daten.",
+        "Prüft vor einer Vorschau oder Veröffentlichung, ob der Benutzer mit Atlassian und dem fest konfigurierten Confluence-Ziel-Space verbunden ist. Dieses Tool verändert keine Daten.",
       inputSchema: {},
     },
     async () => {
-      const activeSession = connections.get(identity.userId);
-      const output = activeSession
+      const activeSession = await getValidConnection(identity.userId);
+      const targetSpace = activeSession?.spaces.find(
+        (space) => space.id === config.spaceId,
+      );
+      const output = activeSession && targetSpace
         ? {
             connected: true,
             user: activeSession.profile.name,
             siteUrl: config.siteUrl,
-            defaultSpaceId: config.spaceId,
-            spaces: activeSession.spaces.map((space) => ({
-              id: space.id,
-              key: space.key,
-              name: space.name,
-            })),
+            targetSpace: {
+              id: targetSpace.id,
+              key: targetSpace.key,
+              name: targetSpace.name,
+            },
           }
         : {
             connected: false,
-            authorizationUrl: `${config.publicBaseUrl}/oauth/start?link_token=${encodeURIComponent(createAccountLinkToken(identity.userId))}`,
+            authorizationUrl: `${config.publicBaseUrl}/oauth/start?link_token=${encodeURIComponent(accountLinks.create(identity.userId))}`,
             message:
               "Der Benutzer muss AutoDocBot zunächst im Browser mit Atlassian verbinden.",
           };
@@ -957,24 +911,19 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
     {
       title: "Bestätigten Prozessartikel veröffentlichen",
       description:
-        "Veröffentlicht eine zuvor erzeugte Vorschau inklusive SVG-Diagramm in Confluence. Darf ausschließlich nach ausdrücklicher Bestätigung des Benutzers aufgerufen werden. Eine Vorschau-ID kann nur einmal veröffentlicht werden.",
+        "Veröffentlicht eine zuvor erzeugte Vorschau inklusive SVG-Diagramm ausschließlich im fest konfigurierten Confluence-Ziel-Space. Darf ausschließlich nach ausdrücklicher Bestätigung des Benutzers aufgerufen werden. Eine Vorschau-ID kann nur einmal für einen Veröffentlichungsversuch verwendet werden.",
       inputSchema: {
         previewId: z.string().min(10).describe("ID aus preview_process_article"),
         confirmed: z
           .literal(true)
           .describe("Muss true sein und eine ausdrückliche Benutzerbestätigung abbilden"),
-        spaceId: z
-          .string()
-          .optional()
-          .describe("Erlaubte Confluence-Space-ID; ohne Wert wird der konfigurierte Standard verwendet"),
       },
     },
-    async ({ previewId, spaceId }) => {
+    async ({ previewId }) => {
       try {
         const output = await publishStoredPreview(
           previewId,
           identity.userId,
-          spaceId,
         );
         return {
           content: [
@@ -1107,7 +1056,7 @@ function processDiagramSvg(): string {
 }
 
 async function createDiagramPage(
-  request: IncomingMessage,
+  _request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
   const activeSession = localConnection();
@@ -1117,13 +1066,11 @@ async function createDiagramPage(
     return;
   }
 
-  const form = await readFormBody(request);
-  const requestedSpaceId = form.get("spaceId");
   const targetSpace = activeSession.spaces.find(
-    (space) => space.id === requestedSpaceId,
+    (space) => space.id === config.spaceId,
   );
   if (!targetSpace) {
-    throw new Error("Der gewählte Space gehört nicht zu den für diesen Benutzer geladenen Spaces.");
+    throw new Error("Der fest konfigurierte Ziel-Space ist für diesen Benutzer nicht verfügbar.");
   }
 
   const now = new Date();
@@ -1232,7 +1179,7 @@ async function readFormBody(request: IncomingMessage): Promise<URLSearchParams> 
 }
 
 async function createTestPage(
-  request: IncomingMessage,
+  _request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
   const activeSession = localConnection();
@@ -1242,13 +1189,11 @@ async function createTestPage(
     return;
   }
 
-  const form = await readFormBody(request);
-  const requestedSpaceId = form.get("spaceId");
   const targetSpace = activeSession.spaces.find(
-    (space) => space.id === requestedSpaceId,
+    (space) => space.id === config.spaceId,
   );
   if (!targetSpace) {
-    throw new Error("Der gewählte Space gehört nicht zu den für diesen Benutzer geladenen Spaces.");
+    throw new Error("Der fest konfigurierte Ziel-Space ist für diesen Benutzer nicht verfügbar.");
   }
 
   const now = new Date();
@@ -1323,7 +1268,7 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
         JSON.stringify({
           status: "ok",
           service: "autodocbot-v2",
-          version: "0.1.4",
+          version: "0.1.5",
           authMode: config.authMode,
         }),
       );
@@ -1381,6 +1326,20 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
       return;
     }
 
+    if (
+      config.authMode !== "local" &&
+      [
+        "/",
+        "/create-test-page",
+        "/create-diagram-page",
+        "/article-preview",
+        "/publish-article",
+      ].includes(url.pathname)
+    ) {
+      sendHtml(response, 404, "<h1>Nicht gefunden</h1>");
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/") {
       sendHtml(
         response,
@@ -1396,7 +1355,7 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
     if (request.method === "GET" && url.pathname === "/oauth/start") {
       const linkToken = url.searchParams.get("link_token");
       const userId = linkToken
-        ? verifyAccountLinkToken(linkToken)
+        ? accountLinks.consume(linkToken)
         : config.authMode === "local"
           ? config.localUserId
           : undefined;

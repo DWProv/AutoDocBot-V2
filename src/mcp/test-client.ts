@@ -4,7 +4,7 @@ import { onboardingSampleSpec } from "../article/sample-process.js";
 
 const client = new Client({
   name: "autodocbot-local-test-client",
-  version: "0.1.4",
+  version: "0.1.5",
 });
 
 const transport = new StreamableHTTPClientTransport(
@@ -30,6 +30,17 @@ try {
       throw new Error(`MCP-Tool fehlt: ${expected}`);
     }
   }
+  const publishTool = tools.tools.find(
+    (tool) => tool.name === "publish_process_article",
+  );
+  const publishProperties = (
+    publishTool?.inputSchema as { properties?: Record<string, unknown> } | undefined
+  )?.properties;
+  if (!publishProperties || "spaceId" in publishProperties) {
+    throw new Error(
+      "Das Publishing-Tool muss ausschließlich den fest konfigurierten Ziel-Space verwenden.",
+    );
+  }
 
   const connection = await client.callTool({
     name: "get_confluence_connection",
@@ -39,8 +50,21 @@ try {
     throw new Error("Verbindungsstatus-Tool ist fehlgeschlagen.");
   }
   const connectionStatus = connection.structuredContent as
-    | { connected?: boolean; user?: string }
+    | {
+        connected?: boolean;
+        user?: string;
+        targetSpace?: { id?: string };
+        spaces?: unknown;
+      }
     | undefined;
+  if (
+    connectionStatus?.connected &&
+    (!connectionStatus.targetSpace?.id || connectionStatus.spaces)
+  ) {
+    throw new Error(
+      "Der Verbindungsstatus muss ausschließlich den fest konfigurierten Ziel-Space ausgeben.",
+    );
+  }
 
   const preview = await client.callTool({
     name: "preview_process_article",
