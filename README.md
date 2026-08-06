@@ -10,6 +10,7 @@ AutoDocBot V2 ist ein End-to-End-verifizierter Proof of Concept für einen Copil
 - [Funktionsumfang](#funktionsumfang)
 - [Verifizierter End-to-End-Stand](#verifizierter-end-to-end-stand)
 - [Architektur](#architektur)
+- [ELI5-Glossar](#eli5-glossar)
 - [Ablauf aus Benutzersicht](#ablauf-aus-benutzersicht)
 - [Projektstruktur](#projektstruktur)
 - [Voraussetzungen](#voraussetzungen)
@@ -103,6 +104,38 @@ Es existieren zwei voneinander getrennte OAuth-Beziehungen:
 2. **MCP-Server → Atlassian:** Der Benutzer verbindet sein Atlassian-Konto per OAuth 2.0 (3LO). AutoDocBot verwendet dieses Benutzertoken für Confluence-Aufrufe.
 
 Dadurch erhält AutoDocBot weder ein globales Confluence-Servicekonto noch die Berechtigung, unabhängig vom jeweiligen Benutzer zu veröffentlichen.
+
+## ELI5-Glossar
+
+Dieses Glossar erklärt die zentralen Spezialbegriffe des Projekts bewusst
+vereinfacht. Allgemeine Grundlagen wie HTTP, API, JSON, Git oder Docker werden
+nicht erneut erläutert.
+
+| Begriff | Einfach erklärt | Bedeutung für AutoDocBot |
+|---|---|---|
+| **Copilot-Agent** | Ein Sprachmodell mit Arbeitsanweisung und Werkzeugkasten. Es versteht die Benutzeranfrage und entscheidet, welches Werkzeug als Nächstes benötigt wird. | Der Agent führt das Gespräch, erkennt Prozessinformationen, stellt Rückfragen und ruft die MCP-Tools auf. Er ist nicht selbst der Confluence-Server. |
+| **MCP und MCP-Server** | MCP ist eine standardisierte Steckverbindung zwischen einem KI-Agenten und externen Werkzeugen. Der Server beschreibt, welche Werkzeuge existieren und welche Ein- und Ausgaben sie erwarten. | AutoDocBot stellt über MCP vier klar begrenzte Werkzeuge bereit. Copilot muss dadurch keine proprietäre Confluence-Integration direkt implementieren. |
+| **MCP-Tool und Tool Discovery** | Ein Tool ist eine einzelne erlaubte Aktion, ähnlich einer beschrifteten Taste. Bei der Tool Discovery fragt der Agent zunächst, welche Tasten verfügbar sind und wie sie bedient werden. | Die vier Tasten prüfen die Verbindung, liefern den Styleguide, erzeugen eine Vorschau oder veröffentlichen die bestätigte Vorschau. |
+| **Delegierte Benutzeridentität** | Der Bot arbeitet nicht mit einem allmächtigen Sammelkonto, sondern erhält die Erlaubnis, eine konkrete Aktion im Namen des angemeldeten Benutzers auszuführen. | Confluence sieht den verbundenen Atlassian-Benutzer als Autor. AutoDocBot kann nur innerhalb dessen Berechtigungen arbeiten. |
+| **Zwei OAuth-Beziehungen** | AutoDocBot passiert zwei getrennte Türsteher: Microsoft prüft, wer den Agenten benutzt; Atlassian prüft, was AutoDocBot für diese Person in Confluence tun darf. | Das Entra-Token schützt den MCP-Zugriff. Das separate Atlassian-3LO-Token autorisiert anschließend die Confluence-Aufrufe. Eine Zustimmung ersetzt nicht die andere. |
+| **OAuth 2.0 (3LO)** | „Three-legged OAuth“ bedeutet, dass drei Beteiligte zusammenwirken: Benutzer, AutoDocBot und Atlassian. Der Benutzer stimmt direkt bei Atlassian zu; AutoDocBot sieht dessen Passwort nie. | Nach der Zustimmung erhält der Server Access- und Refresh-Token für genau diesen Benutzer und die freigegebene Atlassian-Site. |
+| **Access Token und Refresh Token** | Ein Access Token ist eine kurzlebige Zutrittskarte. Das Refresh Token ist die geschützte Berechtigung, später eine neue Zutrittskarte anzufordern, ohne den Benutzer jedes Mal neu anzumelden. | Access Tokens werden für API-Aufrufe verwendet. Refresh Tokens werden verschlüsselt gespeichert und erneuern ablaufende Atlassian-Tokens. |
+| **Issuer, Audience und Scope** | Diese Token-Angaben beantworten drei Fragen: Wer hat die Karte ausgestellt? Für welche Tür gilt sie? Welche Handlungen erlaubt sie? | Der MCP-Server akzeptiert nur Entra-Tokens des konfigurierten Tenants, für die AutoDocBot-API und mit dem delegierten `access_as_user`-Scope. |
+| **Tenant und Single-Tenant** | Ein Tenant ist der abgeschlossene Organisationsbereich eines Unternehmens in Microsoft Entra. Single-Tenant bedeutet, dass nur Benutzer aus genau dieser Organisation akzeptiert werden. | Die aktuelle Bereitstellung ist an einen Entra-Tenant, eine Atlassian-Site und einen Confluence-Ziel-Space gebunden. Fremde Kundentenants benötigen eine eigene Bereitstellung oder eine spätere Multi-Tenant-Architektur. |
+| **Callback, OAuth-State und Einmal-Link** | Nach der Zustimmung schickt Atlassian den Browser über einen Callback zurück. Ein zufälliger State ist dabei wie ein passender Abholschein. Der vorherige Einmal-Link verbindet den Ablauf mit dem richtigen Microsoft-Benutzer. | Link und State sind nur kurz gültig und liegen im Arbeitsspeicher. Der Link wird beim ersten Öffnen verbraucht; er muss bis dahin vertraulich behandelt werden. |
+| **ArticleSpec und Zod-Validierung** | Das ArticleSpec ist ein standardisiertes digitales Formular für den späteren Artikel. Zod ist der strenge Formularprüfer, der Pflichtfelder, Datentypen, Längen und erlaubte Werte kontrolliert. | Copilot liefert keine freie HTML-Seite, sondern strukturierte Artikeldaten. Ungültige Daten werden abgelehnt oder zur internen Reparatur an den Agenten zurückgegeben. |
+| **Semantische Vorprüfung** | Ein korrekt ausgefülltes Formular kann inhaltlich trotzdem widersprüchlich sein. Die semantische Prüfung sucht deshalb zusätzlich nach offenen Zuständigkeiten, unklaren Fristen und Konflikten. | Der Agent erstellt einen Qualitätsbericht; der Server ergänzt deterministische Prüfregeln. Das verbessert die Qualität, ist aber kein allgemeiner mathematischer Beweis für Widerspruchsfreiheit. |
+| **Vorschau-ID und Publishing-Schutz** | Die Vorschau-ID ist eine nummerierte Abholmarke für genau einen vorbereiteten Artikel eines bestimmten Benutzers. Ohne gültige Marke kann nichts veröffentlicht werden. | Sie gilt 30 Minuten, gehört nur einem Benutzer und wird beim Veröffentlichungsversuch verbraucht. `confirmed: true` ist zusätzlich erforderlich; die Interpretation der Chatbestätigung bleibt im PoC eine Agentenregel. |
+| **Confluence Storage Format und Escaping** | Confluence erwartet ein eigenes strukturiertes Seitenformat. Escaping sorgt dafür, dass Benutzertext darin als Text behandelt wird und nicht als eingeschleuster Programm- oder Markup-Befehl. | Der Server rendert das Format deterministisch. Vom Modell gelieferter Text wird nicht als ungeprüftes HTML ausgeführt. |
+| **SVG-Attachment** | SVG ist ein scharf skalierbares Bildformat. Da Confluence das Diagramm als Datei kennen muss, wird es zuerst angehängt und danach in die Seite eingebettet. | Das Publishing besteht aus drei Schritten: Seite erstellen, SVG hochladen und Seite mit eingebettetem Diagramm aktualisieren. Deshalb kann bei einem Teilfehler eine unvollständige Seite zurückbleiben. |
+| **AES-256-GCM, IV und Authentifizierungs-Tag** | AES-256-GCM ist ein Tresor, der Daten nicht nur unlesbar macht, sondern auch Manipulationen erkennt. Ein eigener IV sorgt dafür, dass gleiche Inhalte unterschiedlich verschlüsselt aussehen; der Tag ist das Manipulationssiegel. | Jede Atlassian-Verbindung wird separat verschlüsselt. Der Schlüssel liegt getrennt als Container-App-Secret und nicht gemeinsam mit der Token-Datei. |
+| **Container-App-Revision und persistenter Mount** | Eine Revision ist eine konkrete laufende Version der Anwendung. Der Container selbst ist austauschbar; ein persistenter Mount ist wie ein externer Aktenschrank, der einen Containerwechsel überlebt. | Neue AutoDocBot-Versionen erzeugen neue Azure-Revisionen. Die verschlüsselten Benutzerverbindungen bleiben über den `/data`-Azure-File-Mount erhalten, während Vorschauen im Arbeitsspeicher bei einem Neustart verloren gehen. |
+| **Nicht transaktional und idempotent** | Transaktional hieße: Entweder gelingen alle Veröffentlichungsschritte oder keiner. Idempotent hieße: Eine Wiederholung erzeugt garantiert kein Duplikat. Beides ist im PoC noch nicht vollständig gegeben. | Schlägt der SVG-Upload nach dem Erstellen der Seite fehl, kann eine unfertige Seite bestehen bleiben. Ein neuer Versuch kann eine zweite Seite erzeugen. |
+
+Vertiefende Erklärungen stehen in den Abschnitten
+[Authentifizierung und Sicherheit](#authentifizierung-und-sicherheit),
+[ArticleSpec und Styleguide](#articlespec-und-styleguide) sowie
+[Bekannte PoC-Grenzen](#bekannte-poc-grenzen).
 
 ## Ablauf aus Benutzersicht
 
