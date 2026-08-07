@@ -1,0 +1,26 @@
+swagger: "2.0"
+info:
+  title: AutoDocBot V2 MCP
+  description: >-
+    Streamable-HTTP-MCP-Connector für AutoDocBot V2. Stellt die serverseitig
+    definierten Werkzeuge für Verbindung, Styleguide, Vorschau und
+    Confluence-Veröffentlichung bereit.
+  version: "0.1.6"
+host: autodocbot-v2.lemonflower-3f6716f4.westeurope.azurecontainerapps.io
+basePath: /
+schemes:
+  - https
+consumes:
+  - application/json
+produces:
+  - application/json
+paths:
+  /mcp:
+    post:
+      summary: AutoDocBot MCP aufrufen
+      description: Ruft den AutoDocBot-MCP-Server über Streamable HTTP auf.
+      operationId: InvokeMCP
+      x-ms-agentic-protocol: mcp-streamable-1.0
+      responses:
+        "200":
+          description: MCP-Antwort erfolgreich empfangen

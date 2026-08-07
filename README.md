@@ -751,6 +751,40 @@ https://<PUBLIC-HOST>/mcp
 
 Je nach aktueller Copilot-Studio-Oberfläche heißen die Felder leicht anders. Entscheidend sind der delegierte Scope, der richtige Client und die korrekte Redirect URL.
 
+### PoC-Entscheidung zu SSO und Tenant-Grenzen
+
+Der aktuell veröffentlichte PoC verwendet weiterhin die funktionierende,
+benutzerbezogene Power-Platform-Verbindung. Der Agent liegt im
+Provectus-Standard-Tenant, während Entra-App-Registrierungen und MCP-Server im
+Provectus-Lab-Tenant liegen. Power Platform kann diese Cross-Tenant-Verbindung
+zulassen, solange passende Lab-Berechtigungen vorhanden sind und keine
+Tenant-Isolation sie blockiert. Eine automatische OBO-Anmeldung ist in dieser
+Konstellation jedoch nicht als allgemein nutzbar verifiziert.
+
+Der vorbereitete Custom Connector ist deshalb **nicht an den veröffentlichten
+Agenten gebunden und nicht produktionsfertig**. Seine importierbare Definition
+liegt unter
+[`connectors/autodocbot-mcp.swagger.yaml`](connectors/autodocbot-mcp.swagger.yaml).
+Sie kann später im Zieltenant als Ausgangspunkt für einen SSO-Connector dienen.
+
+Für den Produktivwechsel sind mindestens folgende Schritte erforderlich:
+
+1. API- und Connector-App im Tenant des produktiven Agenten registrieren oder
+   eine bewusst mandantenfähige API-Architektur einführen.
+2. `access_as_user`, OBO-Vorautorisierung, Admin Consent und Redirect-URI im
+   Zieltenant konfigurieren.
+3. Den Custom Connector in der Power-Platform-Umgebung des Agenten importieren,
+   testen und für die vorgesehenen Benutzer freigeben.
+4. `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID` und `ENTRA_ALLOWED_CLIENT_IDS` am
+   MCP-Server auf die produktive Identitätskonfiguration umstellen.
+5. Mit einem Benutzer ohne Maker-, Admin- oder bestehende Connector-Verbindung
+   prüfen, dass die Zustimmung im Chat erfolgt und kein manueller
+   Verbindungsmanager benötigt wird.
+
+Der Azure-Container selbst muss dafür nicht zwingend in denselben Tenant
+verschoben werden; maßgeblich sind die Tokenaussteller-, Audience- und
+Client-Prüfungen.
+
 ### Empfohlene Agentenanweisung
 
 Die vollständige kopierfertige Studio-Anweisung steht in
