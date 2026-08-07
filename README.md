@@ -2,7 +2,7 @@
 
 AutoDocBot V2 ist ein End-to-End-verifizierter Proof of Concept für einen Copilot-Agenten, der frei formulierte Prozessbeschreibungen in konsistente Confluence-Prozessartikel umwandelt. Der Agent strukturiert den Inhalt, wendet einen verbindlichen und zugleich anpassbaren Styleguide an, erzeugt ein SVG-Prozessdiagramm und veröffentlicht den bestätigten Artikel über einen MCP-Server im Namen des angemeldeten Atlassian-Benutzers.
 
-> Aktueller Stand: Version `0.1.6`. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, Copilot Studio, semantische Vorprüfung, agentengesteuerte Strukturreparatur, verschlüsselte Benutzerverbindungen, ein fest begrenzter Ziel-Space, einmal verwendbare Kontoverknüpfungslinks, vorbereitete Adaptive-Card-Bestätigung, Azure Container Apps sowie die bestätigte Veröffentlichung eines Artikels mit SVG-Diagramm wurden praktisch verifiziert.
+> Aktueller Stand: Version `0.1.6`. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, Copilot Studio, semantische Vorprüfung, agentengesteuerte Strukturreparatur, verschlüsselte Benutzerverbindungen, ein fest begrenzter Ziel-Space, einmal verwendbare Kontoverknüpfungslinks, Adaptive-Card-Bestätigung im Chat, Azure Container Apps sowie die bestätigte Veröffentlichung eines Artikels mit SVG-Diagramm wurden praktisch verifiziert.
 
 ## Inhaltsverzeichnis
 
@@ -78,7 +78,7 @@ Nicht Bestandteil dieses PoC sind eine Administrationsoberfläche, eine Datenban
 | Benutzergebundene Atlassian-Verknüpfung | verifiziert | Copilot lieferte einen signierten Link und speicherte die Verbindung benutzerbezogen |
 | ArticleSpec und Styleguide | verifiziert | natürlichsprachlicher Prozess wurde ohne Abfrage einer gewünschten Schrittzahl strukturiert |
 | Vorschau und Bestätigung | verifiziert | Veröffentlichung erfolgte erst nach einer separaten Bestätigung |
-| Adaptive-Card-Buttons | vorbereitet | MCP-Ausgabe, Power-Fx-Karte, sichere Verzweigung und Abnahmetests sind dokumentiert; die Einrichtung und Prüfung im Copilot-Tenant steht noch aus |
+| Adaptive-Card-Buttons | verifiziert | Vorschauwerte wurden an ein Copilot-Thema übergeben; Abbruch verhinderte das Publishing und der Bestätigungsbutton führte über die geprüften Themenausgaben zur veröffentlichten Confluence-Seite |
 | SVG-Diagramm | verifiziert | Diagramm wurde erzeugt, hochgeladen und als letzter Artikelabschnitt eingebettet |
 | Azure Container Apps | verifiziert | Entra-Modus, HTTPS-Ingress, ACR-Image und persistenter Azure-File-Mount sind aktiv |
 
@@ -164,9 +164,10 @@ sequenceDiagram
     end
     Copilot->>MCP: get_article_styleguide
     Copilot->>MCP: preview_process_article(sourceText, articleJson, qualityReviewJson)
-    MCP-->>Copilot: validierte Vorschau und previewId
-    Copilot-->>User: Vorschau und Rückfrage zur Veröffentlichung
-    User->>Copilot: ausdrücklich bestätigen
+    MCP-->>Copilot: Vorschau, previewId und confirmationCardData
+    Copilot-->>User: Adaptive Card mit Publish- und Abbruchbutton
+    User->>Copilot: aktuelle Vorschau per Button bestätigen
+    Copilot->>Copilot: cardInstanceId, Aktion und previewId prüfen
     Copilot->>MCP: publish_process_article(previewId, true)
     MCP->>Confluence: Seite erstellen
     MCP->>Confluence: SVG als Attachment hochladen
@@ -383,8 +384,10 @@ Der Agent darf `publish_process_article` nicht automatisch direkt nach der
 Vorschau aufrufen. Der Server verlangt zwar den Literalwert `confirmed: true`,
 kann aber nicht unabhängig prüfen, ob die Bestätigung tatsächlich im Chat
 erteilt wurde. Das dedizierte Copilot-Thema wertet deshalb die eindeutige
-Kartenaktion aus. Serverseitig bleiben Benutzerbindung, Ablaufzeit und
-Einmalverwendung der Vorschau die maßgeblichen Schutzmechanismen. Eine
+Kartenaktion aus und gibt die geprüfte Freigabe an die generative Orchestrierung
+zurück; diese ruft anschließend das MCP-Publishing-Tool auf. Serverseitig
+bleiben Benutzerbindung, Ablaufzeit und Einmalverwendung der Vorschau die
+maßgeblichen Schutzmechanismen. Eine
 revisionssichere Freigabehistorie ist weiterhin nicht Bestandteil des PoC.
 
 ## ArticleSpec und Styleguide
