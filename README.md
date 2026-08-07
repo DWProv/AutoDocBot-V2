@@ -2,7 +2,7 @@
 
 AutoDocBot V2 ist ein End-to-End-verifizierter Proof of Concept für einen Copilot-Agenten, der frei formulierte Prozessbeschreibungen in konsistente Confluence-Prozessartikel umwandelt. Der Agent strukturiert den Inhalt, wendet einen verbindlichen und zugleich anpassbaren Styleguide an, erzeugt ein SVG-Prozessdiagramm und veröffentlicht den bestätigten Artikel über einen MCP-Server im Namen des angemeldeten Atlassian-Benutzers.
 
-> Aktueller Stand: Version `0.1.5`. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, Copilot Studio, semantische Vorprüfung, agentengesteuerte Strukturreparatur, verschlüsselte Benutzerverbindungen, ein fest begrenzter Ziel-Space, einmal verwendbare Kontoverknüpfungslinks, Azure Container Apps sowie die bestätigte Veröffentlichung eines Artikels mit SVG-Diagramm wurden praktisch verifiziert.
+> Aktueller Stand: Version `0.1.6`. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, Copilot Studio, semantische Vorprüfung, agentengesteuerte Strukturreparatur, verschlüsselte Benutzerverbindungen, ein fest begrenzter Ziel-Space, einmal verwendbare Kontoverknüpfungslinks, vorbereitete Adaptive-Card-Bestätigung, Azure Container Apps sowie die bestätigte Veröffentlichung eines Artikels mit SVG-Diagramm wurden praktisch verifiziert.
 
 ## Inhaltsverzeichnis
 
@@ -58,6 +58,7 @@ Der Copilot-Agent übernimmt daraus folgende Aufgaben:
 - flexibler Styleguide mit unveränderbaren Sicherheits- und Qualitätsregeln
 - Diagramme in den Richtungen `top-down` und `left-right`
 - Vorschau vor jeder Veröffentlichung; Vorschau-IDs sind 30 Minuten gültig und nur für einen Veröffentlichungsversuch verwendbar
+- präsentationsfertige Vorschauwerte für eine interaktive Bestätigungs- und Abbruchkarte im Copilot-Chat
 - fachliche Seitentitel ohne technischen PoC- oder Zeitstempel-Zusatz
 - zentrale MCP-Agentenanweisungen für Ableitung, Rückfragen, Vorschau und Veröffentlichungsbestätigung
 - Microsoft-Entra-Prüfung für produktive MCP-Aufrufe
@@ -77,6 +78,7 @@ Nicht Bestandteil dieses PoC sind eine Administrationsoberfläche, eine Datenban
 | Benutzergebundene Atlassian-Verknüpfung | verifiziert | Copilot lieferte einen signierten Link und speicherte die Verbindung benutzerbezogen |
 | ArticleSpec und Styleguide | verifiziert | natürlichsprachlicher Prozess wurde ohne Abfrage einer gewünschten Schrittzahl strukturiert |
 | Vorschau und Bestätigung | verifiziert | Veröffentlichung erfolgte erst nach einer separaten Bestätigung |
+| Adaptive-Card-Buttons | vorbereitet | MCP-Ausgabe, Power-Fx-Karte, sichere Verzweigung und Abnahmetests sind dokumentiert; die Einrichtung und Prüfung im Copilot-Tenant steht noch aus |
 | SVG-Diagramm | verifiziert | Diagramm wurde erzeugt, hochgeladen und als letzter Artikelabschnitt eingebettet |
 | Azure Container Apps | verifiziert | Entra-Modus, HTTPS-Ingress, ACR-Image und persistenter Azure-File-Mount sind aktiv |
 
@@ -370,11 +372,20 @@ Der Streamable-HTTP-Endpunkt befindet sich unter `/mcp` und akzeptiert `POST`.
 6. Vorschau anzeigen und ausdrückliche Bestätigung einholen
 7. `publish_process_article` mit `confirmed: true`
 
+Für die Bestätigung direkt im Chat liefert die erfolgreiche Vorschau ab Version
+0.1.6 zusätzlich `confirmationCardData`. Die vollständige Einrichtung des
+Copilot-Themas, die Power-Fx-Karte mit den Buttons **Bestätigen und
+veröffentlichen** sowie **Ändern / abbrechen** und die zugehörigen Abnahmetests
+sind in [Artikelvorschau direkt im Chat bestätigen](docs/copilot-preview-confirmation-card.md)
+beschrieben.
+
 Der Agent darf `publish_process_article` nicht automatisch direkt nach der
 Vorschau aufrufen. Der Server verlangt zwar den Literalwert `confirmed: true`,
 kann aber nicht unabhängig prüfen, ob die Bestätigung tatsächlich im Chat
-erteilt wurde. Die korrekte Interpretation der Bestätigung ist im PoC eine
-Agentenregel und keine eigenständige, revisionssichere Freigabe.
+erteilt wurde. Das dedizierte Copilot-Thema wertet deshalb die eindeutige
+Kartenaktion aus. Serverseitig bleiben Benutzerbindung, Ablaufzeit und
+Einmalverwendung der Vorschau die maßgeblichen Schutzmechanismen. Eine
+revisionssichere Freigabehistorie ist weiterhin nicht Bestandteil des PoC.
 
 ## ArticleSpec und Styleguide
 
@@ -810,8 +821,8 @@ sowie ein administratives On-/Offboarding erforderlich.
 ### Docker lokal
 
 ```bash
-docker build -t autodocbot-v2:0.1.5 .
-docker run --rm -p 3000:3000 --env-file .env autodocbot-v2:0.1.5
+docker build -t autodocbot-v2:0.1.6 .
+docker run --rm -p 3000:3000 --env-file .env autodocbot-v2:0.1.6
 ```
 
 Das Multi-Stage-Dockerfile kompiliert TypeScript im Build-Image und übernimmt nur Produktionsabhängigkeiten sowie `dist/` in das Runtime-Image. Der Prozess läuft als unprivilegierter Benutzer `node`.
@@ -839,7 +850,7 @@ az acr create -g "$RG" -n "$ACR" --sku Basic --admin-enabled false
 az storage account create -g "$RG" -n "$STORAGE" -l "$LOCATION" --sku Standard_LRS --min-tls-version TLS1_2
 az storage share-rm create -g "$RG" --storage-account "$STORAGE" --name autodocbot-tokenstore --quota 1
 az containerapp env create -g "$RG" -n "$ENVIRONMENT" -l "$LOCATION"
-az acr build -r "$ACR" -t autodocbot-v2:0.1.5 .
+az acr build -r "$ACR" -t autodocbot-v2:0.1.6 .
 ```
 
 Danach wird der File Share im Container-Apps-Environment registriert:
@@ -859,7 +870,7 @@ az containerapp env storage set \
 
 Die Container App benötigt anschließend:
 
-- Image `<ACR>.azurecr.io/autodocbot-v2:0.1.5`
+- Image `<ACR>.azurecr.io/autodocbot-v2:0.1.6`
 - externe Ingress-Regel, Zielport `3000`
 - `AUTH_MODE=entra`
 - alle Entra- und Atlassian-Werte aus der Konfigurationstabelle

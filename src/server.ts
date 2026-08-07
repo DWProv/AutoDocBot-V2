@@ -171,7 +171,7 @@ const mcpAgentInstructions = [
   "Prüfe den konsolidierten ProzessText vor jeder Vorschau auf Widersprüche, fehlende Verantwortlichkeiten, offene Fragen und unbelegte Annahmen. Übergib diese Prüfung vollständig als qualityReviewJson.",
   "Wenn preview_process_article clarification_required zurückgibt, stelle die gelieferten fachlichen Fragen. Erzeuge nach den Antworten einen widerspruchsfreien konsolidierten sourceText, baue das vollständige ArticleSpec neu auf und rufe preview_process_article selbstständig erneut auf. Erfinde keine Fakten.",
   "Wenn preview_process_article article_structure_retry_required zurückgibt, korrigiere articleJson anhand der validationIssues und requiredArticleShape und rufe dasselbe Tool sofort erneut auf. Das ist ein interner Reparaturschritt: Berichte dem Benutzer nicht über Pflichtfelder und frage ihn nicht nach technischen Strukturangaben.",
-  "Erzeuge mit preview_process_article immer zuerst eine Vorschau und zeige dem Benutzer die wesentlichen Inhalte und die Diagrammrichtung.",
+  "Erzeuge mit preview_process_article immer zuerst eine Vorschau und zeige dem Benutzer die wesentlichen Inhalte und die Diagrammrichtung. Wenn confirmationCardData geliefert wird, verwende diese Werte für eine interaktive Adaptive Card mit den Aktionen publish und cancel.",
   "Rufe publish_process_article ausschließlich auf, nachdem der Benutzer die konkrete aktuelle Vorschau ausdrücklich bestätigt hat. Eine allgemeine Bitte, einen Artikel zu erstellen, ist noch keine Veröffentlichungsbestätigung.",
 ].join("\n");
 
@@ -480,6 +480,46 @@ function storeArticlePreview(spec: ArticleSpec, userId: string): {
   return { previewId, style, svg, expiresAt };
 }
 
+function buildConfirmationCardData(
+  spec: ArticleSpec,
+  style: ResolvedStyleGuide,
+  previewId: string,
+  expiresAt: number,
+) {
+  return {
+    schemaVersion: "1.5",
+    cardInstanceId: `autodocbot-preview-${previewId}`,
+    previewId,
+    heading: "Artikelvorschau bestätigen",
+    title: spec.title,
+    summary: spec.summary,
+    rolesText: spec.roles
+      .map((role) => `${role.name}: ${role.responsibility}`)
+      .join("\n"),
+    stepsText: spec.steps
+      .map(
+        (step) =>
+          `${step.number}. ${step.actor}: ${step.action} → ${step.result}`,
+      )
+      .join("\n"),
+    exceptionsText:
+      spec.exceptions.length > 0
+        ? spec.exceptions
+            .map((item) => `${item.condition}: ${item.handling}`)
+            .join("\n")
+        : "Keine beschriebenen Ausnahmen",
+    diagramDirection: style.diagramDirection,
+    diagramDirectionLabel:
+      style.diagramDirection === "top-down"
+        ? "Von oben nach unten"
+        : "Von links nach rechts",
+    expiresAt: new Date(expiresAt).toISOString(),
+    notice: "Es wurde noch nichts veröffentlicht.",
+    confirmAction: "publish",
+    cancelAction: "cancel",
+  };
+}
+
 function showArticlePreview(response: ServerResponse): void {
   const activeSession = localConnection();
   if (!activeSession) {
@@ -694,7 +734,7 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
   const mcp = new McpServer(
     {
       name: "autodocbot-v2",
-      version: "0.1.5",
+      version: "0.1.6",
     },
     { instructions: mcpAgentInstructions },
   );
@@ -889,8 +929,14 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
             assumptions: 0,
           },
           publicationStatus: "not_published",
+          confirmationCardData: buildConfirmationCardData(
+            spec,
+            style,
+            previewId,
+            expiresAt,
+          ),
           nextAction:
-            "Zeige dem Benutzer diese Vorschau. Rufe publish_process_article erst nach einer ausdrücklichen Veröffentlichungsbestätigung auf.",
+            "Zeige confirmationCardData als interaktive Adaptive Card. Die Aktion publish bestätigt die aktuelle Vorschau; cancel veröffentlicht nichts. Rufe publish_process_article nur nach publish auf und verwende dabei die serverseitig gespeicherte previewId dieser Vorschau.",
         };
         return {
           content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
@@ -1268,7 +1314,7 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
         JSON.stringify({
           status: "ok",
           service: "autodocbot-v2",
-          version: "0.1.5",
+          version: "0.1.6",
           authMode: config.authMode,
         }),
       );

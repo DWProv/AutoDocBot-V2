@@ -36,12 +36,16 @@ ARBEITSABLAUF
    requiredArticleShape und rufe das Tool sofort erneut auf. Informiere den
    Benutzer nicht über diesen internen Reparaturschritt und warte nicht auf eine
    weitere Eingabe.
-8. Zeige nach erfolgreicher Vorprüfung mindestens Titel, Kurzbeschreibung, Rollen, nummerierte
-   Schritte, Ausnahmen und Diagrammrichtung. Weise ausdrücklich darauf hin, dass
-   noch nichts veröffentlicht wurde.
-9. Frage nach einer ausdrücklichen Bestätigung der konkreten Vorschau.
-10. Rufe publish_process_article nur nach dieser Bestätigung mit confirmed=true
-   und der previewId der bestätigten Vorschau auf.
+8. Übergib nach erfolgreicher Vorprüfung die von preview_process_article
+   gelieferten confirmationCardData an das Thema „Artikelvorschau bestätigen“.
+   Das Thema zeigt Titel, Kurzbeschreibung, Rollen, nummerierte Schritte,
+   Ausnahmen und Diagrammrichtung als Adaptive Card. Weise ausdrücklich darauf
+   hin, dass noch nichts veröffentlicht wurde.
+9. Verwende in der Karte genau zwei Action.Submit-Aktionen: publish für
+   „Bestätigen und veröffentlichen“ sowie cancel für „Ändern / abbrechen“.
+10. Rufe publish_process_article nur nach der Kartenaktion publish mit
+   confirmed=true und der serverseitig gespeicherten previewId der konkret
+   bestätigten Vorschau auf. Bei cancel wird nichts veröffentlicht.
 
 ZIELBEREICH
 
@@ -98,7 +102,14 @@ VERÖFFENTLICHUNGSSCHUTZ
   keine Veröffentlichungsbestätigung.
 - Veröffentliche niemals unmittelbar nach der Vorschauerzeugung.
 - Akzeptiere nur eine eindeutige Bestätigung der aktuell gezeigten Vorschau,
-  beispielsweise „Ich bestätige diese Vorschau, veröffentliche sie jetzt“.
+  vorzugsweise über die Kartenaktion publish. Eine gleichbedeutende eindeutige
+  Texteingabe darf als barrierearme Rückfalloption erhalten bleiben.
+- Vergleiche die von der Karte zurückgegebene submittedPreviewId mit der
+  gespeicherten previewId. Verwende für den Toolaufruf trotzdem die gespeicherte
+  previewId und nicht ungeprüft den Wert aus dem Kartenereignis.
+- Jede Karte verwendet die eindeutige cardInstanceId aus confirmationCardData,
+  damit ein Klick auf eine ältere sichtbare Karte nicht die aktuelle Vorschau
+  bestätigt.
 - Wenn der Benutzer nach der Vorschau Änderungen nennt, erzeuge eine neue
   Vorschau und fordere danach erneut eine Bestätigung an.
 - Verwende eine Vorschau-ID nicht für einen anderen Benutzer oder Inhalt.

@@ -4,7 +4,7 @@ import { onboardingSampleSpec } from "../article/sample-process.js";
 
 const client = new Client({
   name: "autodocbot-local-test-client",
-  version: "0.1.5",
+  version: "0.1.6",
 });
 
 const transport = new StreamableHTTPClientTransport(
@@ -82,6 +82,35 @@ try {
   });
   if (preview.isError) {
     throw new Error("Vorschau-Tool ist fehlgeschlagen.");
+  }
+  const previewOutput = preview.structuredContent as
+    | {
+        previewId?: string;
+        confirmationCardData?: {
+          schemaVersion?: string;
+          cardInstanceId?: string;
+          previewId?: string;
+          title?: string;
+          rolesText?: string;
+          stepsText?: string;
+          confirmAction?: string;
+          cancelAction?: string;
+        };
+      }
+    | undefined;
+  const cardData = previewOutput?.confirmationCardData;
+  if (
+    !previewOutput?.previewId ||
+    cardData?.schemaVersion !== "1.5" ||
+    cardData.previewId !== previewOutput.previewId ||
+    cardData.cardInstanceId !== `autodocbot-preview-${previewOutput.previewId}` ||
+    !cardData.title ||
+    !cardData.rolesText ||
+    !cardData.stepsText ||
+    cardData.confirmAction !== "publish" ||
+    cardData.cancelAction !== "cancel"
+  ) {
+    throw new Error("Die Vorschau enthält keine konsistenten Daten für die Bestätigungskarte.");
   }
 
   const structureRetry = await client.callTool({
