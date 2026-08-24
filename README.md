@@ -9,6 +9,7 @@ AutoDocBot V2 ist ein End-to-End-verifizierter Proof of Concept für einen Copil
 - [Zielbild](#zielbild)
 - [Funktionsumfang](#funktionsumfang)
 - [Verifizierter End-to-End-Stand](#verifizierter-end-to-end-stand)
+- [Präsentations- und Onboarding-Unterlagen](#präsentations--und-onboarding-unterlagen)
 - [Architektur](#architektur)
 - [ELI5-Glossar](#eli5-glossar)
 - [Ablauf aus Benutzersicht](#ablauf-aus-benutzersicht)
@@ -84,7 +85,16 @@ Nicht Bestandteil dieses PoC sind eine Administrationsoberfläche, eine Datenban
 
 Der Stand belegt die technische Machbarkeit. Die unter [Bekannte PoC-Grenzen](#bekannte-poc-grenzen) genannten Punkte bleiben vor einem breiten Produktivbetrieb relevant.
 
+## Präsentations- und Onboarding-Unterlagen
+
+- [Projektbeschreibung für die Vorstellung](docs/projektbeschreibung-management.md) – verständlicher Überblick über Problem, Nutzen, Ablauf, Architektur, Sicherheitsprinzipien und aktuellen Reifegrad
+- [Onboarding eines neuen Testusers](docs/testuser-onboarding.md) – ausführbare Checkliste für Microsoft-Zugriff, MCP-Verbindung, Atlassian-Autorisierung, Abnahmetest und Offboarding im aktuellen Cross-Tenant-PoC
+
 ## Architektur
+
+Eine bearbeitbare Darstellung des derzeitigen Tenant- und
+Authentifizierungsaufbaus liegt unter
+[`docs/autodocbot-cross-tenant-architecture.drawio`](docs/autodocbot-cross-tenant-architecture.drawio).
 
 ```mermaid
 flowchart TD
@@ -201,7 +211,10 @@ sequenceDiagram
 │   └── server.ts                    # HTTP, OAuth, MCP und Publishing-Pipeline
 ├── docs/
 │   ├── styleguide.md                # lesbare Styleguide-Dokumentation
-│   └── copilot-agent-instructions.md # kopierfertige Studio-Anweisungen
+│   ├── copilot-agent-instructions.md # kopierfertige Studio-Anweisungen
+│   ├── copilot-preview-confirmation-card.md # Adaptive-Card-Freigabe
+│   ├── projektbeschreibung-management.md # verständliche Präsentationsunterlage
+│   └── testuser-onboarding.md       # Testuser-Onboarding und Abnahmetest
 ├── azure/containerapp-volume.yaml   # Beispiel für Azure File Mount und Runtime
 ├── Dockerfile                       # Multi-Stage-Produktionsimage
 ├── .env.example                     # Konfigurationsvorlage
