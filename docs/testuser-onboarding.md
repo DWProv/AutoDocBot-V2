@@ -121,6 +121,10 @@ festgehalten – ohne Kennwort oder Token.
    Erstellen von Seiten und Attachments erlauben.
 5. Eine normale Anmeldung an der Ziel-Site und den sichtbaren Ziel-Space vor
    dem Bot-Test prüfen.
+6. In der Atlassian Developer Console prüfen, dass die verwendete 3LO-App unter
+   **Distribution** den Status **Sharing** besitzt. Eine private App kann nur
+   vom App-Eigentümer autorisiert werden, auch wenn andere Benutzer regulär auf
+   den Confluence-Space zugreifen können.
 
 Die OAuth-Scopes der App erweitern keine fachlichen Confluence-Rechte. Der Bot
 kann nur das tun, was das verbundene Atlassian-Konto im Ziel-Space ebenfalls
@@ -142,6 +146,9 @@ Vor der Freigabe müssen alle Punkte mit **Ja** beantwortet werden:
 - [ ] Der Testuser besitzt ein Atlassian-Konto auf der konfigurierten Ziel-Site.
 - [ ] Dieses Atlassian-Konto darf den Ziel-Space lesen, Seiten erstellen und
       Attachments hinzufügen.
+- [ ] Die Atlassian-3LO-App besitzt den Distributionsstatus **Sharing** und
+      Organisationsrichtlinien blockieren benutzerinstallierte Connected Apps
+      nicht.
 - [ ] Der Agent ist veröffentlicht und der Kanal **Teams und Microsoft 365
       Copilot** ist weiterhin aktiv.
 - [ ] Der MCP-Server ist erreichbar und `/healthz` meldet den erwarteten
@@ -271,6 +278,11 @@ Erwartetes Ergebnis:
 
 Der Server speichert danach die Atlassian-Verbindung verschlüsselt unter der
 Microsoft-Benutzeridentität. Es wird kein Atlassian-Passwort gespeichert.
+
+Erscheint stattdessen **You don't have access to this app**, zuerst den
+Distributionsstatus **Sharing** der 3LO-App prüfen und anschließend im Agenten
+einen neuen Einmal-Link erzeugen lassen. Besteht der Fehler weiter, muss ein
+Atlassian-Administrator die Richtlinien unter **Connected apps** prüfen.
 
 ## Phase 6 – Funktionaler Abnahmetest
 
