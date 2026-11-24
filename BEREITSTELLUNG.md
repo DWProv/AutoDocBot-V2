@@ -191,6 +191,7 @@ der Schutz des MCP-Servers und seiner Tokens sicherheitsrelevant.
 | `AUTH_LINK_SECRET` | produktiv | Signaturschlüssel für Benutzer-Kontoverknüpfungslinks |
 | `TOKEN_ENCRYPTION_KEY` | Entra | Base64-kodierter Schlüssel mit exakt 32 Byte |
 | `TOKEN_STORE_PATH` | nein | Pfad zum verschlüsselten Verbindungsspeicher |
+| `PUBLICATION_STORE_PATH` | nein | verschlüsselter Vorschau-/Auftragsspeicher; Standard publications.json neben dem Token Store, in Azure /data/publications.json |
 
 Geeignete Produktionsschlüssel lassen sich beispielsweise so erzeugen:
 
@@ -428,7 +429,7 @@ Die Container App benötigt anschließend:
 - Secrets für `ATLASSIAN_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY` und `AUTH_LINK_SECRET`
 - `TOKEN_STORE_PATH=/data/connections.json`
 - Azure-File-Mount `tokenstore` auf `/data`
-- für diesen PoC genau eine Replica, weil Vorschauen und OAuth-State im Arbeitsspeicher liegen
+- für diesen PoC genau eine Replica; OAuth-State liegt im Arbeitsspeicher, Aufträge werden über eine gemeinsame Dateisperre serialisiert
 
 [`azure/containerapp-volume.yaml`](azure/containerapp-volume.yaml) zeigt die erwarteten Environment- und Volume-Strukturen. Vor der Verwendung müssen alle `YOUR_...`-Platzhalter und der Registry-Name ersetzt werden. Geheimniswerte werden als Container-App-Secrets angelegt und nur über `secretRef` referenziert.
 
@@ -455,6 +456,9 @@ npm run check:token-store
 npm run check:connection
 npm run check:security
 npm run check:diagram
+npm run check:publication
+npm run check:publication-api
+npm run check:meeting
 ```
 
 Der MCP-Test benötigt einen laufenden lokalen Server auf Port 3000:
@@ -478,6 +482,9 @@ npm run test:mcp
 | `npm run check:connection` | ungültige Refresh Tokens, vorübergehende Fehler, Benutzertrennung und parallele Erneuerung |
 | `npm run check:security` | bekannte Sicherheitsbefunde der Produktionsabhängigkeiten; schlägt bereits bei niedriger Schwere fehl |
 | `npm run check:diagram` | beide Richtungen, mehrere Entscheidungen/Ausnahmen, Rücksprünge, Prozessenden, fehlende und ungültige Zuordnungen, lange Texte und Maximalgröße |
+| `npm run check:publication` | Fehler, Neustart, Parallelität, Verschlüsselung und keine zweite Seite bei Wiederaufnahme |
+| `npm run check:publication-api` | API-Pfade, Entwurf/Attachment, Versionierung und Schutz vor fremden Paginierungs-Hosts |
+| `npm run check:meeting` | Belege, Beschlüsse, Vorschläge, offene Fragen und Auswahl mehrerer Prozesse |
 | `npm run test:mcp` | MCP-Verbindung, erwartete Tools und nicht publizierende Vorschau |
 
 ## HTTP-Endpunkte
@@ -500,6 +507,45 @@ Die manuellen HTML-Testendpunkte sind PoC-Hilfen und stehen ausschließlich bei
 Startseite `/` mit `404`. Für die Copilot-Integration ist ausschließlich `/mcp`
 vorgesehen; `/oauth/start` und `/oauth/callback` werden nur für die
 Atlassian-Kontoverknüpfung benötigt.
+
+## Abnahme des fortsetzbaren Publishings und der Meeting-Vorbereitung
+
+Der neue Ablauf wurde lokal mit simulierten Confluence-Antworten geprüft.
+Vor breiter Freigabe ist ein Test in einem freigegebenen Ziel-Space nötig:
+
+1. Während des Updates keine neuen Publikationen starten und laufende Vorgänge
+   der alten Version auslaufen lassen. Alte Fehlversuche sind nicht migrierbar.
+2. PUBLICATION_STORE_PATH muss auf einem dauerhaften, beschreibbaren Mount
+   liegen. Mit TOKEN_STORE_PATH=/data/connections.json ist der Standard bereits
+   /data/publications.json. Datei und Schlüssel getrennt sichern.
+3. Copilot-MCP-Verbindung aktualisieren und sechs Werkzeuge prüfen. Die neuen
+   Agentenanweisungen aus docs/copilot-agent-instructions.md übernehmen.
+4. Mit einem Testartikel Entwurfserstellung, Attachment-PUT mit status=draft,
+   anschließende Attachment-Abfrage und Veröffentlichung als current abnehmen.
+5. Einen kontrollierten Upload-Fehler auslösen. Es darf nur ein unveröffentlichter
+   Entwurf zurückbleiben; get_publication_status muss den Auftrag zeigen.
+6. Dieselbe previewId nach Neustart fortsetzen. Derselbe Inhalt darf nicht als
+   neue Seite angelegt werden; nach Erfolg muss der fachliche Titel erscheinen.
+7. Bei verlorenem Anlagen-Response die Shared-Draft-Suche prüfen. Ist dieser
+   ältere API-Weg in der Site nicht verfügbar, den echten Entwurf manuell öffnen
+   und seine Seiten-ID als recoveryPageId übergeben. Titel, Besitzer, Space,
+   Version und Inhalt müssen passen; keine unbekannte ID ausprobieren.
+8. Eine vorhandene gleichnamige Seite und einen manuell veränderten Entwurf
+   testen: beides muss einen Prüfhalt statt ein Überschreiben auslösen.
+9. Einen Meeting-Text mit Beschluss, Vorschlag, offener Frage und zwei Prozessen
+   testen. Erst auswählen und klären; dann eigene Artikelvorschau bestätigen.
+
+Bei publication_retry_required denselben bestätigten Auftrag mit derselben
+previewId erneut aufrufen; bei publication_busy später wiederholen. Bei
+publication_review_required oder publication_conflict zuerst prüfen und keine
+Ersatzseite erstellen. Eine fremde Atlassian-Verbindung darf einen offenen
+Auftrag nicht übernehmen. Nach einem Prozessabbruch die 60-Sekunden-Frist der
+Dateisperre abwarten; eine aktive Sperre niemals manuell entfernen.
+
+Abgeschlossene Aufträge behalten Deduplizierungsmetadaten einschließlich Titel
+und Ergebnis. Offene Aufträge behalten verschlüsselte Prozessinhalte bis zur
+Auflösung. Eine Bereinigung muss kontrolliert und zusammen mit der Backup- und
+Offboarding-Regelung erfolgen; keine komplette Auftragsdatei löschen.
 
 ## Fehlerbehebung
 

@@ -23,6 +23,8 @@ try {
     "get_article_styleguide",
     "preview_process_article",
     "publish_process_article",
+    "get_publication_status",
+    "prepare_meeting_processes",
   ];
   for (const expected of expectedTools) {
     if (!toolNames.includes(expected)) {
@@ -64,6 +66,21 @@ try {
       "Der Verbindungsstatus muss ausschließlich den fest konfigurierten Ziel-Space ausgeben.",
     );
   }
+
+  const meetingSummary = "Beschlossen wurde folgender Ablauf: HR meldet den Eintritt fünf Arbeitstage vorher. Die IT erstellt das Benutzerkonto.";
+  const meetingResult = await client.callTool({
+    name: "prepare_meeting_processes", arguments: {
+      meetingSummary,
+      extractionJson: JSON.stringify({ processes: [{ id: "onboarding", title: "Onboarding neuer Mitarbeitender", status: "agreed",
+        statements: [{ kind: "agreed", evidence: "HR meldet den Eintritt fünf Arbeitstage vorher." },
+          { kind: "agreed", evidence: "Die IT erstellt das Benutzerkonto." }], questions: [] }] }),
+    },
+  });
+  const meetingOutput = meetingResult.structuredContent as Record<string, unknown> | undefined;
+  if (meetingResult.isError || meetingOutput?.status !== "meeting_process_ready" ||
+      meetingOutput.publicationStatus !== "not_published") throw new Error("Meeting-Vorbereitung ist fehlgeschlagen.");
+  const ownJobs = await client.callTool({ name: "get_publication_status", arguments: {} });
+  if (ownJobs.isError || !Array.isArray((ownJobs.structuredContent as Record<string, unknown> | undefined)?.jobs)) throw new Error("Auftragsstatus konnte nicht gelesen werden.");
 
   const preview = await client.callTool({
     name: "preview_process_article",

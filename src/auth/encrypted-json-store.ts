@@ -36,14 +36,29 @@ export class EncryptedJsonStore<T> {
     return this.#values.get(key);
   }
 
+  entries(): IterableIterator<[string, T]> {
+    return this.#values.entries();
+  }
+
   set(key: string, value: T): void {
+    const previous = this.#values.get(key);
+    const existed = this.#values.has(key);
     this.#values.set(key, value);
-    this.#persist();
+    try { this.#persist(); }
+    catch (error) {
+      if (existed) this.#values.set(key, previous!);
+      else this.#values.delete(key);
+      throw error;
+    }
   }
 
   delete(key: string): boolean {
+    const previous = this.#values.get(key);
     const deleted = this.#values.delete(key);
-    if (deleted) this.#persist();
+    if (deleted) {
+      try { this.#persist(); }
+      catch (error) { this.#values.set(key, previous!); throw error; }
+    }
     return deleted;
   }
 
@@ -95,6 +110,7 @@ export class EncryptedJsonStore<T> {
     writeFileSync(temporaryPath, JSON.stringify(serialized), {
       encoding: "utf8",
       mode: 0o600,
+      flush: true,
     });
     renameSync(temporaryPath, this.#filePath);
   }

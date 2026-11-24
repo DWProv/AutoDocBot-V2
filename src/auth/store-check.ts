@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EncryptedJsonStore } from "./encrypted-json-store.js";
@@ -22,6 +22,16 @@ try {
     throw new Error("Verschlüsselte Verbindung konnte nicht wieder geladen werden.");
   }
 
+  const blockedTemporaryPath = `${filePath}.${process.pid}.tmp`;
+  mkdirSync(blockedTemporaryPath);
+  for (const operation of [() => second.set("tenant:user", { accessToken: "changed-token" }), () => second.delete("tenant:user")]) {
+    let failed = false;
+    try { operation(); } catch { failed = true; }
+    if (!failed || second.get("tenant:user")?.accessToken !== "sensitive-test-token") {
+      throw new Error("Ein Speicherausfall hat den ungesicherten Zustand im Arbeitsspeicher hinterlassen.");
+    }
+  }
+  rmSync(blockedTemporaryPath, { recursive: true });
   second.delete("tenant:user");
   const third = new EncryptedJsonStore<{ accessToken: string }>(filePath, key);
   if (third.get("tenant:user")) {
