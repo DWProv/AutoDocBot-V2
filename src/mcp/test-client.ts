@@ -7,9 +7,8 @@ const client = new Client({
   version: "0.1.6",
 });
 
-const transport = new StreamableHTTPClientTransport(
-  new URL("http://localhost:3000/mcp"),
-);
+const mcpUrl = new URL(process.env.MCP_TEST_URL || "http://localhost:3000/mcp");
+const transport = new StreamableHTTPClientTransport(mcpUrl);
 
 try {
   await client.connect(transport);
@@ -170,8 +169,35 @@ try {
     throw new Error("Semantische Probleme haben die Vorschau nicht blockiert.");
   }
 
+  const excessiveElements = await client.callTool({
+    name: "get_article_styleguide",
+    arguments: { unexpected: Array.from({ length: 129 }, () => "test") },
+  });
+  if (!excessiveElements.isError || !Array.isArray(excessiveElements.content) || !excessiveElements.content.some(
+    (item: unknown) => typeof item === "object" && item !== null && "text" in item &&
+      typeof item.text === "string" && item.text.includes("maximum of 128 elements"),
+  )) {
+    throw new Error("Die MCP-Begrenzung für verschachtelte Eingaben ist nicht aktiv.");
+  }
+
+  const oversized = await fetch(mcpUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0", id: "oversized-test", method: "tools/call",
+      params: { name: "get_article_styleguide", arguments: { oversized: "x".repeat(1024 * 1024) } },
+    }),
+  });
+  await oversized.text();
+  if (oversized.status !== 413) {
+    throw new Error(`Die MCP-Anfragegrenze wurde nicht erzwungen (HTTP ${oversized.status}).`);
+  }
+
   console.log(
-    `MCP erfolgreich geprüft. Tools: ${toolNames.join(", ")}. Atlassian-Verbindung: ${connectionStatus?.connected ? `verbunden (${connectionStatus.user ?? "Benutzer erkannt"})` : "nicht verbunden"}. Vorschau wurde erzeugt, aber nicht veröffentlicht.`,
+    `MCP erfolgreich geprüft. Tools: ${toolNames.join(", ")}. Atlassian-Verbindung: ${connectionStatus?.connected ? `verbunden (${connectionStatus.user ?? "Benutzer erkannt"})` : "nicht verbunden"}. Vorschau wurde erzeugt, aber nicht veröffentlicht. Übergröße und zu viele Eingabeelemente wurden abgelehnt.`,
   );
 } finally {
   await client.close();

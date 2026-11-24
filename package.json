@@ -13,13 +13,15 @@
     "check:quality-review": "tsx src/article/quality-review-check.ts",
     "check:account-link": "tsx src/auth/account-link-check.ts",
     "test:mcp": "tsx src/mcp/test-client.ts",
-    "check:token-store": "tsx src/auth/store-check.ts"
+    "check:token-store": "tsx src/auth/store-check.ts",
+    "check:connection": "tsx src/auth/connection-check.ts",
+    "check:security": "npm audit --omit=dev --audit-level=low"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "dotenv": "^17.2.1",
     "jose": "^6.2.8",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.1.0",

@@ -46,6 +46,7 @@ Der Copilot-Agent übernimmt daraus folgende Aufgaben:
 ## Funktionsumfang
 
 - MCP-Server auf Basis von Streamable HTTP
+- MCP-Anfragen sind auf 1 MiB begrenzt; vor der Tool-Validierung sind höchstens 128 Eingabeelemente erlaubt
 - vier klar getrennte MCP-Tools für Verbindung, Styleguide, Vorschau und Veröffentlichung
 - Atlassian OAuth 2.0 (3LO) mit Benutzerdelegation und Refresh Tokens
 - Veröffentlichung unter der Identität des verbundenen Atlassian-Benutzers
@@ -555,6 +556,8 @@ späteren Produktivbetrieb die stärkere Absicherung.
 - atomisches Schreiben über eine temporäre Datei
 - Dateirechte `0600`, Verzeichnisrechte `0700`
 - ablaufende Atlassian Access Tokens werden über den Refresh Token erneuert
+- endgültig ungültige Refresh Tokens führen zu einem neuen persönlichen Atlassian-Anmeldelink; vorübergehende Fehler erhalten die gespeicherte Verbindung
+- parallele Aufrufe desselben Benutzers teilen sich eine Token-Erneuerung
 - im lokalen Modus entsteht der ignorierte Schlüssel `.local/token-encryption.key`
 - im Entra-Modus ist ein extern bereitgestellter `TOKEN_ENCRYPTION_KEY` zwingend
 

@@ -32,6 +32,7 @@ import {
   loadOrCreateEncryptionKey,
 } from "./auth/encrypted-json-store.js";
 import { OneTimeAccountLinkStore } from "./auth/account-link.js";
+import { createAtlassianConnectionResolver } from "./auth/atlassian-connection.js";
 
 type TokenResponse = {
   access_token: string;
@@ -166,6 +167,7 @@ const transientCleanup = setInterval(() => {
 transientCleanup.unref();
 const mcpAgentInstructions = [
   "Prüfe vor der Artikelarbeit mit get_confluence_connection, ob der aktuelle Benutzer mit Confluence verbunden ist.",
+  "Wenn ein Tool authorizationUrl liefert, zeige genau diesen persönlichen Atlassian-Anmeldelink sofort als anklickbaren Link an. Fordere den Benutzer zur Atlassian-Anmeldung auf und prüfe danach erneut mit get_confluence_connection. Verweise dafür nicht auf den Microsoft-/Power-Platform-Verbindungsmanager und erfinde oder verändere keinen Link.",
   "Rufe get_article_styleguide ab und wende den gelieferten Styleguide auf jeden Artikel an.",
   "Leite Rollen, Prozessschritte, Entscheidungen, Ausnahmen und insbesondere die Anzahl der Schritte selbst aus dem Benutzertext ab. Frage niemals nach einer gewünschten Schrittzahl oder nach technischen Schemafeldern.",
   "Prüfe den konsolidierten ProzessText vor jeder Vorschau auf Widersprüche, fehlende Verantwortlichkeiten, offene Fragen und unbelegte Annahmen. Übergib diese Prüfung vollständig als qualityReviewJson.",
@@ -296,42 +298,26 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return JSON.parse(text) as T;
 }
 
-async function getValidConnection(
-  userId: string,
-): Promise<AtlassianConnection | undefined> {
-  const connection = connections.get(userId);
-  if (!connection) return undefined;
-  if (connection.tokenExpiresAt > Date.now() + 60_000) return connection;
-  if (!connection.token.refresh_token) {
-    connections.delete(userId);
-    return undefined;
-  }
+const getValidConnection = createAtlassianConnectionResolver({
+  store: connections,
+  clientId: config.clientId,
+  clientSecret: config.clientSecret,
+  onConnectionInvalidated: (reason) => {
+    console.warn(JSON.stringify({ event: "atlassian_reauthorization_required", reason }));
+  },
+});
 
-  const refreshedToken = await fetchJson<TokenResponse>(
-    "https://auth.atlassian.com/oauth/token",
-    {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({
-        grant_type: "refresh_token",
-        client_id: config.clientId,
-        client_secret: config.clientSecret,
-        refresh_token: connection.token.refresh_token,
-      }),
-    },
-  );
-  const refreshedConnection: AtlassianConnection = {
-    ...connection,
-    token: {
-      ...refreshedToken,
-      refresh_token:
-        refreshedToken.refresh_token ?? connection.token.refresh_token,
-    },
-    tokenExpiresAt: Date.now() + refreshedToken.expires_in * 1000,
+function connectionRequiredOutput(userId: string) {
+  return {
+    connected: false,
+    status: "authorization_required",
+    authorizationUrl: `${config.publicBaseUrl}/oauth/start?link_token=${encodeURIComponent(accountLinks.create(userId))}`,
+    message: "Bitte verbinde dein persönliches Atlassian-Konto über den beigefügten Anmeldelink erneut mit Confluence.",
+    nextAction: "Zeige authorizationUrl unverändert als anklickbaren Link an. Der Benutzer meldet sich dort bei Atlassian an und bestätigt den Zugriff. Prüfe danach get_confluence_connection erneut. Der Microsoft-/Power-Platform-Verbindungsmanager ist dafür nicht zuständig.",
   };
-  connections.set(userId, refreshedConnection);
-  return refreshedConnection;
 }
+
+class AtlassianConnectionRequiredError extends Error {}
 
 function authorizationUrl(userId: string): string {
   const state = randomBytes(32).toString("base64url");
@@ -598,9 +584,7 @@ async function publishStoredPreview(
 ): Promise<PublishedArticle> {
   const activeSession = await getValidConnection(userId);
   if (!activeSession) {
-    throw new Error(
-      `Keine Atlassian-Verbindung vorhanden. Öffne zuerst ${new URL(config.redirectUri).origin} und verbinde das Atlassian-Konto.`,
-    );
+    throw new AtlassianConnectionRequiredError("Eine neue persönliche Atlassian-Anmeldung ist erforderlich.");
   }
   const preview = previewId ? articlePreviews.get(previewId) : undefined;
   if (!preview || preview.expiresAt < Date.now()) {
@@ -736,7 +720,12 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
       name: "autodocbot-v2",
       version: "0.1.6",
     },
-    { instructions: mcpAgentInstructions },
+    {
+      instructions: mcpAgentInstructions,
+      // Tools accept at most three scalar fields. Bound validation work before
+      // the SDK validates arbitrary nested input (GHSA-46jr-4wx8-v453).
+      maxToolInputElements: 128,
+    },
   );
 
   mcp.registerTool(
@@ -744,7 +733,7 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
     {
       title: "Confluence-Verbindung prüfen",
       description:
-        "Prüft vor einer Vorschau oder Veröffentlichung, ob der Benutzer mit Atlassian und dem fest konfigurierten Confluence-Ziel-Space verbunden ist. Dieses Tool verändert keine Daten.",
+        "Prüft die persönliche Atlassian-Verbindung und den fest konfigurierten Confluence-Ziel-Space. Erneuert abgelaufene Tokens. Bei endgültig ungültiger Anmeldung liefert es connected:false und authorizationUrl. Zeige diesen Link sofort anklickbar an, damit der Benutzer sein Atlassian-Konto erneut verbinden kann.",
       inputSchema: {},
     },
     async () => {
@@ -763,12 +752,7 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
               name: targetSpace.name,
             },
           }
-        : {
-            connected: false,
-            authorizationUrl: `${config.publicBaseUrl}/oauth/start?link_token=${encodeURIComponent(accountLinks.create(identity.userId))}`,
-            message:
-              "Der Benutzer muss AutoDocBot zunächst im Browser mit Atlassian verbinden.",
-          };
+        : connectionRequiredOutput(identity.userId);
       return {
         content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
         structuredContent: output,
@@ -984,6 +968,13 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
           },
         };
       } catch (error) {
+        if (error instanceof AtlassianConnectionRequiredError) {
+          const output = { ...connectionRequiredOutput(identity.userId), publicationStatus: "not_published" };
+          return {
+            content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
+            structuredContent: output,
+          };
+        }
         const message = error instanceof Error ? error.message : String(error);
         return {
           isError: true,
@@ -1050,6 +1041,7 @@ async function handleMcpRequest(
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
+    maxRequestBodySize: 1024 * 1024,
   });
   await mcp.connect(transport);
   response.on("close", () => {

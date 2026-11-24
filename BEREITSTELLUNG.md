@@ -452,6 +452,8 @@ npm run check:styleguide
 npm run check:quality-review
 npm run check:account-link
 npm run check:token-store
+npm run check:connection
+npm run check:security
 ```
 
 Der MCP-Test benötigt einen laufenden lokalen Server auf Port 3000:
@@ -462,7 +464,7 @@ npm run dev
 npm run test:mcp
 ```
 
-`test:mcp` prüft Tool Discovery, Verbindungsstatus und Vorschauerzeugung. Der Test veröffentlicht keine Confluence-Seite.
+`test:mcp` prüft Tool Discovery, Verbindungsstatus, Vorschauerzeugung sowie die Ablehnung übergroßer Anfragen und zu vieler Eingabeelemente. Der Test veröffentlicht keine Confluence-Seite. Mit `MCP_TEST_URL` lässt sich ein anderer lokaler Testport verwenden.
 
 | Script | Prüfung |
 |---|---|
@@ -472,6 +474,8 @@ npm run test:mcp
 | `npm run check:quality-review` | explizite Widersprüche, unbestimmte Fristen und fehlende Verantwortlichkeiten |
 | `npm run check:account-link` | Signatur, Ablauf und Einmalnutzung der Atlassian-Kontoverknüpfungslinks |
 | `npm run check:token-store` | Verschlüsselung, erneutes Laden und Löschen des Stores |
+| `npm run check:connection` | ungültige Refresh Tokens, vorübergehende Fehler, Benutzertrennung und parallele Erneuerung |
+| `npm run check:security` | bekannte Sicherheitsbefunde der Produktionsabhängigkeiten; schlägt bereits bei niedriger Schwere fehl |
 | `npm run test:mcp` | MCP-Verbindung, erwartete Tools und nicht publizierende Vorschau |
 
 ## HTTP-Endpunkte
@@ -496,6 +500,50 @@ vorgesehen; `/oauth/start` und `/oauth/callback` werden nur für die
 Atlassian-Kontoverknüpfung benötigt.
 
 ## Fehlerbehebung
+
+### Sicherheitsstand der Abhängigkeiten
+
+Am 24. November 2026 wurden die neun von npm gemeldeten Paketbefunde durch
+kompatible Updates behoben. Unter anderem verwenden die geprüften Lockfile-
+Versionen `@modelcontextprotocol/sdk` 1.32.2, `zod` 4.6.7 und `proxy-addr` 2.0.8.
+Die vollständige npm-Prüfung einschließlich Entwicklungsabhängigkeiten meldete
+danach null bekannte Befunde. Das ist eine Prüfung der npm-Abhängigkeiten zum
+Prüfzeitpunkt, keine allgemeine Sicherheitsgarantie für die Anwendung.
+
+Für GHSA-46jr-4wx8-v453 reicht das MCP-Update allein nicht: Der Server setzt
+zusätzlich `maxToolInputElements: 128` und `maxRequestBodySize: 1048576`.
+Die Tools benötigen regulär höchstens drei skalare Eingabefelder. Die
+Begrenzung wird im lokalen HTTP-Integrationstest geprüft; eine Anfrage über
+1 MiB wird mit HTTP 413 abgelehnt. Die Microsoft-Authentifizierung erfolgt
+weiterhin vor der MCP-Verarbeitung.
+
+### Atlassian-Verbindung ungültig, Teams zeigt keinen Anmeldelink
+
+`get_confluence_connection` erneuert ein abgelaufenes Access Token automatisch.
+Lehnt Atlassian das Refresh Token endgültig mit `invalid_grant` oder einer
+expliziten Meldung über ein ungültiges Refresh Token ab, entfernt der Server
+ausschließlich die Verbindung dieses Benutzers. Das Tool liefert danach
+`connected: false`, `status: authorization_required` und einen neuen,
+persönlichen `authorizationUrl`-Link. Der Agent soll diesen sofort anklickbar
+anzeigen. Derselbe Link wird geliefert, wenn die Anmeldung erst beim
+Veröffentlichungsversuch als ungültig erkannt wird; dabei bleibt die Vorschau
+bis zu ihrem regulären Ablauf erhalten und es wird nichts veröffentlicht.
+
+Der Link führt zur Atlassian-Zustimmung; der Microsoft-/Power-Platform-
+Verbindungsmanager ersetzt diesen Schritt nicht. Nach erfolgreicher Anmeldung
+`get_confluence_connection` erneut aufrufen. Keine vollständige Token-Datei
+löschen und keine fremden Benutzerverbindungen zurücksetzen.
+
+Bei Netzwerkfehlern, Zeitüberschreitungen, HTTP 429/5xx oder allgemeinen
+Client-/Secret-Fehlern bleibt die Verbindung gespeichert. Solche Fehler sind
+kein Beleg für widerrufene Benutzerzustimmung. Parallele Anfragen desselben
+Benutzers teilen sich eine Token-Erneuerung. Der Server protokolliert einen
+endgültigen Verbindungsreset als `atlassian_reauthorization_required`, ohne
+Tokens, Links oder Prozessinhalte auszugeben.
+
+Die Korrektur wird erst nach dem Build eines neuen Container-Images und der
+Bereitstellung einer neuen Azure-Revision aktiv. Bei einer alten Revision
+kann die Token-Erneuerung noch vor der Link-Ausgabe abbrechen.
 
 ### Atlassian zeigt `You don't have access to this app`
 
