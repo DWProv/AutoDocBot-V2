@@ -518,6 +518,11 @@ Vor breiter Freigabe ist ein Test in einem freigegebenen Ziel-Space nötig:
 2. PUBLICATION_STORE_PATH muss auf einem dauerhaften, beschreibbaren Mount
    liegen. Mit TOKEN_STORE_PATH=/data/connections.json ist der Standard bereits
    /data/publications.json. Datei und Schlüssel getrennt sichern.
+   Der Container läuft als node (UID/GID 1000). Für Azure Files müssen die
+   Mount-Optionen uid=1000,gid=1000,dir_mode=0700,file_mode=0600 gesetzt sein.
+   Ohne passende Eigentümerkennung kann die Heartbeat-Sperre trotz
+   Schreibrechten mit EPERM bei utime fehlschlagen. Die Vorabnahme muss die
+   Veröffentlichungstests mit TMPDIR=/data auf dem echten Mount ausführen.
 3. Copilot-MCP-Verbindung aktualisieren und sechs Werkzeuge prüfen. Die neuen
    Agentenanweisungen aus docs/copilot-agent-instructions.md übernehmen.
 4. Mit einem Testartikel Entwurfserstellung, Attachment-PUT mit status=draft,

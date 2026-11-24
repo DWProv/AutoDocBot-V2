@@ -53,3 +53,4 @@ properties:
       - name: token-store
         storageType: AzureFile
         storageName: tokenstore
+        mountOptions: uid=1000,gid=1000,dir_mode=0700,file_mode=0600
