@@ -45,7 +45,7 @@ class FakeApi implements PublicationApi {
     const current = this.pages.get(draft.id)!;
     if (current.version.number !== draft.version.number) throw new ConfluenceApiError(409);
     this.pages.set(draft.id, { ...current, title, status: "current", body: { storage: { value: body } },
-      version: { number: current.version.number + 1, message, authorId: "account" } });
+      version: { number: 1, message, authorId: "account" } });
     this.onPublish?.();
     if (this.fault === "publish-after") throw new Error("synthetic lost response");
   }
@@ -83,6 +83,7 @@ try {
       const result = await restarted.publish(p.previewId, context, api);
       assert.equal(result.pageId, "1"); assert.equal(api.creates, 1); assert.equal(api.pages.size, 1);
       assert.equal(api.pages.get("1")!.status, "current");
+      assert.equal(api.pages.get("1")!.version.number, 1, "Erstveröffentlichung und Wiederaufnahme erkennen Version 1");
     });
   }
   await check("unbekannter Ausgang der Entwurfsanlage ohne Fund: niemals blind erneut anlegen", async (s, api) => {
@@ -94,9 +95,24 @@ try {
   });
   await check("eindeutig abgelehnte Entwurfsanlage ist nach Korrektur wiederholbar", async (s, api) => {
     const p = await s.createPreview(onboardingSampleSpec(), "user"); api.fault = "create-rejected";
-    await expectProblem(s.publish(p.previewId, context, api), "publication_retry_required");
+    await expectProblem(s.publish(p.previewId, context, api), "publication_review_required");
     api.fault = "none"; await s.publish(p.previewId, context, api); assert.equal(api.pages.size, 1);
   });
+  for (const httpStatus of [400, 422]) {
+    await check(`HTTP ${httpStatus} ist Prüfbedarf, keine Aufforderung zu zeitbasiertem Retry`, async (s, api) => {
+      const p = await s.createPreview(onboardingSampleSpec(), "user");
+      const publish = api.publish.bind(api);
+      api.publish = async () => { throw new ConfluenceApiError(httpStatus, "draft_publish"); };
+      await expectProblem(s.publish(p.previewId, context, api), "publication_review_required");
+      assert.equal(s.status("user")[0]?.status, "publication_review_required");
+      assert.equal(s.status("user")[0]?.stage, "publishing");
+      api.publish = publish;
+      const result = await s.publish(p.previewId, context, api);
+      assert.equal(result.pageId, "1");
+      assert.equal(api.pages.get("1")!.version.number, 1);
+      assert.equal(api.creates, 1);
+    });
+  }
   await check("nicht verfügbare Draft-Suche: nur passende echte Entwurfs-ID übernehmen", async (s, api) => {
     const p = await s.createPreview(onboardingSampleSpec(), "user"); api.fault = "create-after";
     await expectProblem(s.publish(p.previewId, context, api), "publication_retry_required"); api.fault = "none";

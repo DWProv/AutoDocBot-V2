@@ -1,3 +1,6 @@
+// A never-published draft becomes published version 1, regardless of its draft counter.
+export const INITIAL_PUBLISHED_VERSION = 1;
+
 export type PublicationPage = {
   id: string; title: string; status: string; spaceId: string;
   ownerId?: string; authorId?: string;
@@ -16,7 +19,9 @@ export interface PublicationApi {
 }
 
 export class ConfluenceApiError extends Error {
-  constructor(readonly status: number) { super(`Confluence-Anfrage fehlgeschlagen (HTTP ${status}).`); }
+  constructor(readonly status: number, readonly operation?: string, readonly requestId?: string) {
+    super(`Confluence-Anfrage fehlgeschlagen (HTTP ${status}${operation ? `, Schritt ${operation}` : ""}).`);
+  }
 }
 
 export function createConfluencePublicationApi(options: {
@@ -33,7 +38,18 @@ export function createConfluencePublicationApi(options: {
       ...init, redirect: "error", signal: AbortSignal.timeout(15_000),
       headers: { ...headers, ...init.headers },
     });
-    if (!response.ok) throw new ConfluenceApiError(response.status);
+    if (!response.ok) {
+      const method = init.method ?? "GET";
+      const operation = url.pathname.includes("/child/attachment") ? "diagram_upload"
+        : url.pathname.endsWith("/attachments") ? "attachment_check"
+        : method === "POST" ? "draft_create" : method === "PUT" ? "draft_publish"
+        : /\/pages\/[^/]+$/u.test(url.pathname) ? "page_check" : "page_lookup";
+      const trace = response.headers.get("atl-traceid") ?? response.headers.get("x-arequestid");
+      // Retain only bounded diagnostics, never arbitrary API response bodies or
+      // request headers: those may contain process text or credentials.
+      throw new ConfluenceApiError(response.status, operation,
+        trace && /^[a-zA-Z0-9_-]{1,128}$/u.test(trace) ? trace : undefined);
+    }
     return response.status === 204 ? {} : response.json();
   };
   const endpoint = (path: string) => `${base}/wiki/${path}`;
@@ -101,7 +117,7 @@ export function createConfluencePublicationApi(options: {
         method: "PUT", headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: draft.id, spaceId: options.spaceId, status: "current", title,
           body: { representation: "storage", value: body },
-          version: { number: draft.version.number + 1, message } }),
+          version: { number: INITIAL_PUBLISHED_VERSION, message } }),
       });
     },
   };

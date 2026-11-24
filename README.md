@@ -585,6 +585,14 @@ Jeder Microsoft-Benutzer besitzt dadurch eine eigene Atlassian-Verbindung. Die
 Tokens werden nicht an Copilot zurückgegeben und nicht in Git gespeichert. Sie
 liegen verschlüsselt im persistenten `/data`-Token-Store.
 
+Ein noch nie veröffentlichter Entwurf wird mit `version.number: 1` veröffentlicht.
+Der Entwurfszähler dient separat als Schutz gegen fremde Änderungen; er wird
+nicht als veröffentlichte Versionsnummer hochgezählt. Auch die Wiederaufnahme
+nach verlorener Antwort prüft die erste veröffentlichte Version 1. HTTP 400,
+403 und 422 erfordern Prüfung oder Korrektur statt zeitbasiertem Wiederholen.
+Fehlerdiagnosen enthalten nur HTTP-Status, Verarbeitungsschritt und eine
+validierte Anfragekennung, keine Confluence-Antwortinhalte oder Zugangsdaten.
+
 ### 6. Veröffentlichung im Namen des Benutzers
 
 Nach der ausdrücklichen Bestätigung einer Vorschau bestimmt der MCP-Server über

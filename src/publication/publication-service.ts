@@ -8,7 +8,7 @@ import { resolveStyleGuide } from "../article/styleguide.js";
 import { renderConfluenceStorage } from "../article/renderer.js";
 import { generateProcessSvg } from "../diagram/process-svg.js";
 import { EncryptedJsonStore } from "../auth/encrypted-json-store.js";
-import { ConfluenceApiError, type PublicationApi, type PublicationPage } from "./confluence-api.js";
+import { INITIAL_PUBLISHED_VERSION, ConfluenceApiError, type PublicationApi, type PublicationPage } from "./confluence-api.js";
 
 const attachmentPlaceholder = "AUTODOCBOT_ATTACHMENT_PLACEHOLDER";
 type Snapshot = { spec: ArticleSpec; style: ResolvedStyleGuide; svg: string; bodyTemplate: string };
@@ -173,7 +173,7 @@ export class PublicationService {
         if (page.spaceId !== context.spaceId) problem("publication_review_required", "Der Entwurf befindet sich nicht mehr im vorgesehenen Space.");
         if (page.status === "current") {
           guard(); const attachments = await api.attachments(page.id);
-          if (page.title === job.title && page.version.message === marker && page.version.number === (job.draftVersion ?? 0) + 1 &&
+          if (page.title === job.title && page.version.message === marker && page.version.number === INITIAL_PUBLISHED_VERSION &&
             page.version.authorId === context.accountId && page.body?.storage?.value?.includes(job.attachmentName) && attachments.some(a => a.title === job.attachmentName)) return finish(page);
           problem("publication_review_required", "Die Seite wurde außerhalb des erwarteten Ablaufs veröffentlicht oder verändert. Es wird keine neue Seite angelegt.");
         }
@@ -208,14 +208,16 @@ export class PublicationService {
         guard(); await api.publish(page, job.title, body, marker);
         guard(); const published = await api.getPage(page.id);
         if (published.status !== "current" || published.title !== job.title || published.version.message !== marker ||
-          published.version.number !== page.version.number + 1 || published.version.authorId !== context.accountId || !published.body?.storage?.value?.includes(job.attachmentName)) {
+          published.version.number !== INITIAL_PUBLISHED_VERSION || published.version.authorId !== context.accountId || !published.body?.storage?.value?.includes(job.attachmentName)) {
           problem("publication_review_required", "Die vollständige Veröffentlichung konnte noch nicht bestätigt werden. Bitte den gleichen Auftrag erneut prüfen.");
         }
         return finish(published);
       } catch (error) {
         if (error instanceof PublicationProblem) throw error;
         const message = error instanceof ConfluenceApiError ? error.message : "Die Veröffentlichung wurde unterbrochen. Bereits erreichte Schritte bleiben gespeichert.";
-        const status = error instanceof ConfluenceApiError && error.status === 401 ? "publication_authorization_required" : "publication_retry_required";
+        const status = error instanceof ConfluenceApiError && error.status === 401 ? "publication_authorization_required"
+          : error instanceof ConfluenceApiError && [400, 403, 422].includes(error.status)
+            ? "publication_review_required" : "publication_retry_required";
         save({ lastProblem: message, problemStatus: status });
         throw new PublicationProblem(status, message, job.previewId, job.id, job.stage);
       }

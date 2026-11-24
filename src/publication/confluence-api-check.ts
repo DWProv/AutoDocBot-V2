@@ -34,7 +34,7 @@ const fake: typeof fetch = async (input, init = {}) => {
   if (url.pathname.endsWith("/attachments")) return Response.json({ results: [{ id: "att1", title: "stable.svg" }] });
   if (init.method === "PUT") {
     const body = JSON.parse(String(init.body));
-    assert.equal(body.id, "1"); assert.equal(body.status, "current"); assert.equal(body.version.number, 2);
+    assert.equal(body.id, "1"); assert.equal(body.status, "current"); assert.equal(body.version.number, 1, "Die erste Veröffentlichung eines Entwurfs muss Version 1 verwenden");
     assert.equal(body.version.message, "marker");
     return Response.json({ ...draft, status: "current" });
   }
