@@ -38,6 +38,10 @@ export function onboardingSampleSpec(): ArticleSpec {
           "HR meldet den Eintritt mindestens fünf Arbeitstage vor dem ersten Arbeitstag an Dennis.",
         result: "Dennis hat die Onboarding-Anfrage erhalten.",
         decision: "Sind alle Pflichtangaben vollständig?",
+        decisionBranches: [
+          { label: "Ja", target: { type: "step", number: 2 } },
+          { label: "Nein", target: { type: "exception", number: 1 } },
+        ],
       },
       {
         number: 2,
@@ -64,6 +68,7 @@ export function onboardingSampleSpec(): ArticleSpec {
         condition: "Pflichtangaben in der Onboarding-Anfrage fehlen.",
         handling:
           "Dennis gibt die Anfrage zur Vervollständigung an HR zurück. Nach der Ergänzung wird die Vollständigkeit erneut geprüft.",
+        nextStep: 1,
       },
     ],
     relatedLinks: [],

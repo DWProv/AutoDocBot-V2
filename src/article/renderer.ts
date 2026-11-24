@@ -1,5 +1,6 @@
 import type { ArticleSpec } from "./article-spec.js";
 import type { ResolvedStyleGuide } from "./styleguide.js";
+import { describeStepFlow, describeExceptionFlow } from "./process-flow.js";
 
 function xml(value: unknown): string {
   return String(value)
@@ -70,15 +71,15 @@ export function renderConfluenceStorage(
         <td>${text(step.actor, style)}</td>
         <td>${text(step.action, style)}</td>
         <td>${text(step.result, style)}</td>
-        <td>${step.decision ? text(step.decision, style) : "–"}</td>
+        <td>${text(describeStepFlow(step), style) || "–"}</td>
       </tr>`,
     )
     .join("");
   const exceptions = spec.exceptions.length
     ? `<table><thead><tr><th>Bedingung</th><th>Vorgehen</th></tr></thead><tbody>${spec.exceptions
         .map(
-          (item) =>
-            `<tr><td>${text(item.condition, style)}</td><td>${text(item.handling, style)}</td></tr>`,
+          (item, index) =>
+            `<tr><td>${text(`Ausnahme ${index + 1}: ${item.condition}`, style)}</td><td>${text(item.handling, style)}<br />${text(describeExceptionFlow(item), style)}</td></tr>`,
         )
         .join("")}</tbody></table>`
     : "<p><em>Im Eingangstext wurden keine Ausnahmen oder Eskalationen angegeben.</em></p>";
@@ -171,7 +172,7 @@ export function renderConfluenceStorage(
     `<h2>${xml(h.scope)}</h2><p>${text(spec.scope, style)}</p>`,
     `<h2>${xml(h.roles)}</h2><table><thead><tr><th>Rolle</th><th>Verantwortung</th></tr></thead><tbody>${roles}</tbody></table>`,
     `<h2>${xml(h.prerequisites)}</h2>${list(spec.prerequisites, style, "Im Eingangstext wurden keine Voraussetzungen angegeben.")}`,
-    `<h2>${xml(h.process)}</h2><table><thead><tr><th>Nr.</th><th>Rolle</th><th>Aktivität</th><th>Ergebnis</th><th>Entscheidung</th></tr></thead><tbody>${steps}</tbody></table>`,
+    `<h2>${xml(h.process)}</h2><table><thead><tr><th>Nr.</th><th>Rolle</th><th>Aktivität</th><th>Ergebnis</th><th>Entscheidung / Fortsetzung</th></tr></thead><tbody>${steps}</tbody></table>`,
     `<h2>${xml(h.exceptions)}</h2>${exceptions}`,
     `<h2>${xml(h.relatedLinks)}</h2>${links}`,
     metadata ? `<h2>Dokumentinformationen</h2><table><tbody>${metadata}</tbody></table>` : "",

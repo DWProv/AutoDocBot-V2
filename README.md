@@ -55,6 +55,7 @@ Der Copilot-Agent übernimmt daraus folgende Aufgaben:
 - deterministisches Confluence-Storage-Format statt ungeprüftem Modell-HTML
 - flexibler Styleguide mit unveränderbaren Sicherheits- und Qualitätsregeln
 - Diagramme in den Richtungen `top-down` und `left-right`
+- alle Entscheidungen und Ausnahmen mit expliziten Zweigzielen, Fortsetzungen, Rücksprüngen und Prozessenden in beiden Richtungen; fehlende Zuordnungen werden sichtbar markiert
 - Vorschau vor jeder Veröffentlichung; Vorschau-IDs sind 30 Minuten gültig und nur für einen Veröffentlichungsversuch verwendbar
 - präsentationsfertige Vorschauwerte für eine interaktive Bestätigungs- und Abbruchkarte im Copilot-Chat
 - fachliche Seitentitel ohne technischen PoC- oder Zeitstempel-Zusatz
@@ -362,7 +363,36 @@ Ein verkürztes Beispiel:
 }
 ```
 
-Die vollständige Feldvalidierung steht in `src/article/article-spec.ts`. Unter anderem gelten folgende Grenzen:
+Die vollständige Feldvalidierung steht in `src/article/article-spec.ts`.
+
+Die Verbindungen im Diagramm werden ausdrücklich in den Artikeldaten beschrieben:
+
+```json
+{
+  "decision": "Sind die Angaben vollständig?",
+  "decisionBranches": [
+    {"label": "Ja", "target": {"type": "step", "number": 2}},
+    {"label": "Nein", "target": {"type": "exception", "number": 1}}
+  ]
+}
+```
+
+Ein Zweig kann auch `{ "type": "end" }` als Ziel verwenden. Die Nummer einer
+Ausnahme entspricht ihrer Position im `exceptions`-Array ab 1. Eine Ausnahme
+mit `nextStep: 1` führt nach ihrer Behandlung zurück zu Schritt 1; mit
+`endsProcess: true` endet der Prozess. Unabhängige Ausnahmen können über
+`stepNumber` dem auslösenden Schritt zugeordnet werden. Nicht entscheidende
+Schritte können mit `nextStep` oder `endsProcess` abweichend fortsetzen oder enden.
+Ohne diese Angaben gilt bei normalen Schritten die nummerierte Reihenfolge.
+
+Für Entscheidungen ohne beschriebene Ausgänge werden keine Zweigziele
+angenommen. Nicht zugeordnete Ausnahmen erscheinen separat mit Hinweis.
+Die Vorschau gibt solche Lücken als `diagram.warnings` aus; Copilot soll sie
+vor der Veröffentlichung klären. Artikel, Bestätigungskarte und Diagramm
+verwenden dieselben Zweig- und Fortsetzungsangaben. Lange Texte werden
+vollständig umgebrochen. Der SVG-Renderer benötigt keinen externen Renderdienst.
+
+Unter anderem gelten folgende Grenzen:
 
 - Titel: 5 bis 140 Zeichen
 - mindestens eine Rolle und ein Prozessschritt

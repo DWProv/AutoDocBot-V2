@@ -1,133 +1,109 @@
+import dagre from "@dagrejs/dagre";
 import type { ArticleSpec } from "../article/article-spec.js";
 import type { ResolvedStyleGuide } from "../article/styleguide.js";
+import { buildProcessGraph, type ProcessNode } from "./process-graph.js";
 
-function svgText(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&apos;");
+function xml(value: string): string {
+  return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/gu, "�")
+    .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;").replaceAll("'", "&apos;");
 }
 
-function wrap(value: string, maxCharacters = 46): string[] {
-  const words = value.split(/\s+/u);
+/** Preserve every word, including long unbroken identifiers, without clipping. */
+export function wrapDiagramText(value: string, columns = 34): string[] {
   const lines: string[] = [];
-  let line = "";
-  for (const word of words) {
-    const candidate = line ? `${line} ${word}` : word;
-    if (candidate.length > maxCharacters && line) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = candidate;
-    }
-  }
-  if (line) lines.push(line);
-  return lines.slice(0, 3);
-}
-
-function multilineText(
-  lines: string[],
-  x: number,
-  y: number,
-  lineHeight: number,
-): string {
-  return `<text x="${x}" y="${y}" text-anchor="middle">${lines
-    .map(
-      (line, index) =>
-        `<tspan x="${x}" dy="${index === 0 ? 0 : lineHeight}">${svgText(line)}</tspan>`,
-    )
-    .join("")}</text>`;
-}
-
-export function generateProcessSvg(
-  spec: ArticleSpec,
-  style: ResolvedStyleGuide,
-): string {
-  return style.diagramDirection === "left-right"
-    ? generateLeftRight(spec)
-    : generateTopDown(spec);
-}
-
-function shell(width: number, height: number, content: string): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="diagram-title diagram-desc">
-  <title id="diagram-title">${svgText("Prozessdiagramm")}</title>
-  <desc id="diagram-desc">${svgText("Automatisch aus den strukturierten Prozessschritten erzeugtes Ablaufdiagramm.")}</desc>
-  <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#0c66e4"/></marker>
-    <filter id="shadow" x="-15%" y="-20%" width="130%" height="150%"><feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#091e42" flood-opacity="0.14"/></filter>
-  </defs>
-  <rect width="${width}" height="${height}" rx="20" fill="#f7f8f9"/>
-  <style>text{font-family:Arial,Helvetica,sans-serif;fill:#172b4d}.role{font-size:14px;font-weight:700;fill:#0c66e4}.action{font-size:16px;font-weight:600}.label{font-size:13px;font-weight:700}</style>
-  ${content}
-</svg>`;
-}
-
-function generateTopDown(spec: ArticleSpec): string {
-  const width = 1000;
-  const boxWidth = 510;
-  const boxHeight = 104;
-  const x = (width - boxWidth) / 2;
-  const startY = 80;
-  const gap = 90;
-  const decisionStepIndex = spec.steps.findIndex((step) => step.decision);
-  const exception = spec.exceptions[0];
-  const extraDecisionHeight = decisionStepIndex >= 0 ? 150 : 0;
-  const height = startY + spec.steps.length * (boxHeight + gap) + extraDecisionHeight + 80;
-  const parts: string[] = [];
-  let y = startY;
-
-  for (const [index, step] of spec.steps.entries()) {
-    parts.push(`<g filter="url(#shadow)"><rect x="${x}" y="${y}" width="${boxWidth}" height="${boxHeight}" rx="14" fill="#fff" stroke="#b3b9c4"/></g>`);
-    parts.push(`<text class="role" x="${width / 2}" y="${y + 27}" text-anchor="middle">${svgText(`${step.number}. ${step.actor}`)}</text>`);
-    parts.push(multilineText(wrap(step.action), width / 2, y + 54, 20).replace("<text ", '<text class="action" '));
-
-    const boxBottom = y + boxHeight;
-    if (index === decisionStepIndex && step.decision) {
-      const diamondCenterY = boxBottom + 76;
-      parts.push(`<path d="M${width / 2} ${boxBottom} V${diamondCenterY - 42}" stroke="#0c66e4" stroke-width="3" marker-end="url(#arrow)"/>`);
-      parts.push(`<polygon points="${width / 2},${diamondCenterY - 42} ${width / 2 + 130},${diamondCenterY} ${width / 2},${diamondCenterY + 42} ${width / 2 - 130},${diamondCenterY}" fill="#e9f2ff" stroke="#0c66e4" stroke-width="2"/>`);
-      parts.push(multilineText(wrap(step.decision, 31), width / 2, diamondCenterY - 8, 18).replace("<text ", '<text class="label" '));
-      if (exception) {
-        const exceptionX = 735;
-        parts.push(`<path d="M${width / 2 + 130} ${diamondCenterY} H${exceptionX - 20}" stroke="#c9372c" stroke-width="3" marker-end="url(#arrow)"/>`);
-        parts.push(`<text class="label" x="${width / 2 + 155}" y="${diamondCenterY - 10}">Nein</text>`);
-        parts.push(`<rect x="${exceptionX - 20}" y="${diamondCenterY - 55}" width="240" height="110" rx="12" fill="#ffeceb" stroke="#c9372c"/>`);
-        parts.push(multilineText(wrap(exception.handling, 28), exceptionX + 100, diamondCenterY - 22, 18));
+  for (const paragraph of value.split(/\n/u)) {
+    let line = "";
+    for (const word of paragraph.split(/\s+/u).filter(Boolean)) {
+      const characters = Array.from(word);
+      if (line && Array.from(line).length + characters.length + 1 > columns) {
+        lines.push(line); line = "";
       }
-      parts.push(`<text class="label" x="${width / 2 + 15}" y="${diamondCenterY + 62}">Ja</text>`);
-      y = diamondCenterY + 42 + gap;
-      parts.push(`<path d="M${width / 2} ${diamondCenterY + 42} V${y - 14}" stroke="#0c66e4" stroke-width="3" marker-end="url(#arrow)"/>`);
-    } else if (index < spec.steps.length - 1) {
-      const nextY = y + boxHeight + gap;
-      parts.push(`<path d="M${width / 2} ${boxBottom} V${nextY - 14}" stroke="#0c66e4" stroke-width="3" marker-end="url(#arrow)"/>`);
-      y = nextY;
+      while (characters.length > columns) lines.push(characters.splice(0, columns).join(""));
+      const remainder = characters.join("");
+      if (remainder) line = line ? `${line} ${remainder}` : remainder;
     }
+    if (line) lines.push(line);
   }
-
-  return shell(width, height, parts.join(""));
+  return lines;
 }
 
-function generateLeftRight(spec: ArticleSpec): string {
-  const boxWidth = 280;
-  const boxHeight = 125;
-  const gap = 80;
-  const startX = 50;
-  const y = 95;
-  const width = startX * 2 + spec.steps.length * boxWidth + (spec.steps.length - 1) * gap;
-  const height = 330;
-  const parts: string[] = [];
+type PositionedNode = ProcessNode & {
+  width: number; height: number; x: number; y: number;
+  lines: Array<{ text: string; kind: string }>;
+};
+type Point = { x: number; y: number };
 
-  spec.steps.forEach((step, index) => {
-    const x = startX + index * (boxWidth + gap);
-    parts.push(`<g filter="url(#shadow)"><rect x="${x}" y="${y}" width="${boxWidth}" height="${boxHeight}" rx="14" fill="#fff" stroke="#b3b9c4"/></g>`);
-    parts.push(`<text class="role" x="${x + boxWidth / 2}" y="${y + 28}" text-anchor="middle">${svgText(`${step.number}. ${step.actor}`)}</text>`);
-    parts.push(multilineText(wrap(step.action, 31), x + boxWidth / 2, y + 58, 19).replace("<text ", '<text class="action" '));
-    if (index < spec.steps.length - 1) {
-      parts.push(`<path d="M${x + boxWidth} ${y + boxHeight / 2} H${x + boxWidth + gap - 14}" stroke="#0c66e4" stroke-width="3" marker-end="url(#arrow)"/>`);
+function sizeNode(node: ProcessNode): PositionedNode {
+  const lines = [
+    ...wrapDiagramText(node.heading).map((text) => ({ text, kind: "heading" })),
+    ...wrapDiagramText(node.text).map((text) => ({ text, kind: "body" })),
+    ...wrapDiagramText(node.note ?? "").map((text) => ({ text, kind: "note" })),
+  ];
+  const diamond = node.kind === "decision";
+  return { ...node, lines, width: diamond ? 660 : 360,
+    height: (lines.length * 20 + 40) * (diamond ? 2 : 1), x: 0, y: 0 };
+}
+
+function textLines(node: PositionedNode): string {
+  const start = node.y - ((node.lines.length - 1) * 20) / 2 + 5;
+  return node.lines.map((line, i) => `<text class="${line.kind}" x="${node.x}" y="${start + i * 20}" text-anchor="middle">${xml(line.text)}</text>`).join("");
+}
+
+function diamondIntersection(node: PositionedNode, toward: Point): Point {
+  const dx = toward.x - node.x, dy = toward.y - node.y;
+  const scale = 1 / (Math.abs(dx) / (node.width / 2) + Math.abs(dy) / (node.height / 2));
+  return Number.isFinite(scale) ? { x: node.x + dx * scale, y: node.y + dy * scale } : toward;
+}
+
+export function generateProcessSvg(spec: ArticleSpec, style: ResolvedStyleGuide): string {
+  const process = buildProcessGraph(spec);
+  const graph = new dagre.graphlib.Graph({ multigraph: true });
+  graph.setGraph({ rankdir: style.diagramDirection === "left-right" ? "LR" : "TB",
+    nodesep: 85, ranksep: 105, edgesep: 30, marginx: 48, marginy: 48 });
+  graph.setDefaultEdgeLabel(() => ({}));
+  for (const node of process.nodes) graph.setNode(node.id, sizeNode(node));
+  for (const edge of process.edges) {
+    const lines = wrapDiagramText(edge.label, 20);
+    graph.setEdge(edge.from, edge.to, { ...edge, lines,
+      width: lines.length ? 188 : 0, height: lines.length ? lines.length * 18 + 16 : 0,
+      labelpos: "c" }, edge.id);
+  }
+  dagre.layout(graph);
+  const bounds = graph.graph();
+  const width = Math.ceil(Math.max(900, bounds.width ?? 0));
+  const titleLines = wrapDiagramText(spec.title, Math.floor((width - 96) / 11));
+  const headerHeight = 58 + titleLines.length * 22;
+  const height = Math.ceil((bounds.height ?? 0) + headerHeight + 40);
+  const horizontalOffset = (width - (bounds.width ?? width)) / 2;
+  const paths: string[] = [], labels: string[] = [];
+  const colors = { normal: "#0c66e4", exception: "#c9372c", unknown: "#946200" };
+  for (const ref of graph.edges()) {
+    const edge = graph.edge(ref);
+    const points: Point[] = edge.points.map((p: Point) => ({ ...p }));
+    const source = graph.node(ref.v) as PositionedNode, target = graph.node(ref.w) as PositionedNode;
+    if (source.kind === "decision" && points[1]) points[0] = diamondIntersection(source, points[1]);
+    if (target.kind === "decision" && points[points.length - 2]) points[points.length - 1] = diamondIntersection(target, points[points.length - 2]!);
+    const kind = edge.kind as keyof typeof colors;
+    paths.push(`<path data-edge="${xml(edge.id)}" data-from="${xml(ref.v)}" data-to="${xml(ref.w)}" d="${points.map((p, i) => `${i ? "L" : "M"}${p.x},${p.y}`).join(" ")}" fill="none" stroke="${colors[kind]}" stroke-width="2.5" ${kind === "unknown" ? 'stroke-dasharray="7 5"' : ""} marker-end="url(#arrow-${kind})"/>`);
+    if (edge.lines.length) {
+      labels.push(`<g><rect x="${edge.x - edge.width / 2}" y="${edge.y - edge.height / 2}" width="${edge.width}" height="${edge.height}" rx="6" fill="#f7f8f9"/>${edge.lines.map((line: string, i: number) => `<text class="edge-label" x="${edge.x}" y="${edge.y - (edge.lines.length - 1) * 9 + i * 18 + 4}" text-anchor="middle">${xml(line)}</text>`).join("")}</g>`);
     }
-  });
-
-  return shell(width, height, parts.join(""));
+  }
+  const nodes = graph.nodes().map((id: string) => {
+    const node = graph.node(id) as PositionedNode;
+    const x = node.x, y = node.y, w = node.width, h = node.height;
+    const shape = node.kind === "decision"
+      ? `<polygon points="${x},${y-h/2} ${x+w/2},${y} ${x},${y+h/2} ${x-w/2},${y}" fill="#e9f2ff" stroke="#0c66e4"/>`
+      : `<rect x="${x-w/2}" y="${y-h/2}" width="${w}" height="${h}" rx="${node.kind === "terminal" ? 28 : 12}" fill="${node.kind === "exception" ? "#ffeceb" : node.kind === "unknown" ? "#fff7d6" : "#fff"}" stroke="${node.kind === "exception" ? "#c9372c" : node.kind === "unknown" ? "#946200" : "#8590a2"}"/>`;
+    return `<g data-node="${xml(id)}" data-kind="${node.kind}" stroke-width="2"><title>${xml(`${node.heading}: ${node.text}${node.note ? ` (${node.note})` : ""}`)}</title>${shape}${textLines(node)}</g>`;
+  }).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="diagram-title diagram-desc">
+<title id="diagram-title">${xml(spec.title)}</title><desc id="diagram-desc">${xml(`Prozess mit ${spec.steps.length} Schritten, ${spec.steps.filter(s => s.decision).length} Entscheidungen und ${spec.exceptions.length} Ausnahmen. ${process.warnings.join(" ")}`)}</desc>
+<defs>${Object.entries(colors).map(([kind, color]) => `<marker id="arrow-${kind}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="${color}"/></marker>`).join("")}</defs>
+<rect width="${width}" height="${height}" rx="16" fill="#f7f8f9"/>
+<style>text{font-family:DejaVu Sans Mono,Consolas,monospace;fill:#172b4d;font-size:14px}.heading{font-weight:bold;fill:#0c66e4}.note{font-size:12px;fill:#946200}.edge-label{font-size:12px;font-weight:bold}.title{font-size:18px;font-weight:bold}</style>
+${titleLines.map((line, i) => `<text class="title" x="48" y="${34 + i*22}">${xml(line)}</text>`).join("")}
+<text x="48" y="${headerHeight-14}" font-size="12">Rot: Ausnahmen · Gelb/gestrichelt: Angaben ungeklärt</text>
+<g transform="translate(${horizontalOffset},${headerHeight})">${paths.join("")}${nodes}${labels.join("")}</g></svg>`;
 }

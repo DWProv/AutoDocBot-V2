@@ -23,6 +23,8 @@ import {
   type ResolvedStyleGuide,
 } from "./article/styleguide.js";
 import { generateProcessSvg } from "./diagram/process-svg.js";
+import { buildProcessGraph } from "./diagram/process-graph.js";
+import { describeStepFlow, describeExceptionFlow } from "./article/process-flow.js";
 import {
   resolveMcpIdentity,
   type McpIdentity,
@@ -169,6 +171,7 @@ const mcpAgentInstructions = [
   "Prüfe vor der Artikelarbeit mit get_confluence_connection, ob der aktuelle Benutzer mit Confluence verbunden ist.",
   "Wenn ein Tool authorizationUrl liefert, zeige genau diesen persönlichen Atlassian-Anmeldelink sofort als anklickbaren Link an. Fordere den Benutzer zur Atlassian-Anmeldung auf und prüfe danach erneut mit get_confluence_connection. Verweise dafür nicht auf den Microsoft-/Power-Platform-Verbindungsmanager und erfinde oder verändere keinen Link.",
   "Rufe get_article_styleguide ab und wende den gelieferten Styleguide auf jeden Artikel an.",
+  "Erfasse bei jeder Entscheidung alle beschriebenen Ausgänge als decisionBranches mit label und target (type step/exception mit number oder type end). Nummern von Ausnahmen entsprechen ihrer Position ab 1. Ordne unabhängige Ausnahmen mit stepNumber einem Schritt zu. Erfasse beschriebene Rücksprünge/Fortsetzungen mit nextStep und explizites Prozessende mit endsProcess. Erfinde keine Zuordnungen, Ja-/Nein-Ausgänge oder Rücksprünge. Bei diagram.warnings kläre die fehlenden Angaben vor einer Veröffentlichung mit dem Benutzer und erzeuge danach eine neue Vorschau.",
   "Leite Rollen, Prozessschritte, Entscheidungen, Ausnahmen und insbesondere die Anzahl der Schritte selbst aus dem Benutzertext ab. Frage niemals nach einer gewünschten Schrittzahl oder nach technischen Schemafeldern.",
   "Prüfe den konsolidierten ProzessText vor jeder Vorschau auf Widersprüche, fehlende Verantwortlichkeiten, offene Fragen und unbelegte Annahmen. Übergib diese Prüfung vollständig als qualityReviewJson.",
   "Wenn preview_process_article clarification_required zurückgibt, stelle die gelieferten fachlichen Fragen. Erzeuge nach den Antworten einen widerspruchsfreien konsolidierten sourceText, baue das vollständige ArticleSpec neu auf und rufe preview_process_article selbstständig erneut auf. Erfinde keine Fakten.",
@@ -196,12 +199,18 @@ const requiredArticleShape = {
       action: "string (eine Hauptaktion)",
       result: "string (Ergebnis der Aktion)",
       decision: "string (optional)",
+      decisionBranches: [{ label: "Ausgang (z. B. Ja/Nein)", target: "{type: step|exception, number: 1-basiertes Ziel} oder {type: end}" }],
+      nextStep: "integer (optional, explizite Fortsetzung ohne Entscheidung)",
+      endsProcess: "boolean (optional, explizites Ende ohne Entscheidung)",
     },
   ],
   exceptions: [
     {
       condition: "string",
       handling: "string",
+      stepNumber: "integer (optional, auslösender Schritt; alternativ Zuordnung über decisionBranches)",
+      nextStep: "integer (optional, Fortsetzung oder Rücksprung)",
+      endsProcess: "boolean (optional, explizites Prozessende)",
     },
   ],
   relatedLinks: [],
@@ -485,13 +494,13 @@ function buildConfirmationCardData(
     stepsText: spec.steps
       .map(
         (step) =>
-          `${step.number}. ${step.actor}: ${step.action} → ${step.result}`,
+          `${step.number}. ${step.actor}: ${step.action} → ${step.result}${describeStepFlow(step) ? ` | ${describeStepFlow(step)}` : ""}`,
       )
       .join("\n"),
     exceptionsText:
       spec.exceptions.length > 0
         ? spec.exceptions
-            .map((item) => `${item.condition}: ${item.handling}`)
+            .map((item, index) => `Ausnahme ${index + 1}: ${item.condition}: ${item.handling} | ${describeExceptionFlow(item)}`)
             .join("\n")
         : "Keine beschriebenen Ausnahmen",
     diagramDirection: style.diagramDirection,
@@ -500,6 +509,7 @@ function buildConfirmationCardData(
         ? "Von oben nach unten"
         : "Von links nach rechts",
     expiresAt: new Date(expiresAt).toISOString(),
+    diagramWarningsText: buildProcessGraph(spec).warnings.join("\n"),
     notice: "Es wurde noch nichts veröffentlicht.",
     confirmAction: "publish",
     cancelAction: "cancel",
@@ -885,6 +895,7 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
           spec,
           identity.userId,
         );
+        const diagramWarnings = buildProcessGraph(spec).warnings;
         const output = {
           previewId,
           expiresAt: new Date(expiresAt).toISOString(),
@@ -904,6 +915,9 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
             generated: true,
             direction: style.diagramDirection,
             processStepCount: spec.steps.length,
+            decisionCount: spec.steps.filter((step) => step.decision).length,
+            exceptionCount: spec.exceptions.length,
+            warnings: diagramWarnings,
           },
           qualityReview: {
             status: "passed",
@@ -919,8 +933,9 @@ function createPublicationMcpServer(identity: McpIdentity): McpServer {
             previewId,
             expiresAt,
           ),
-          nextAction:
-            "Zeige confirmationCardData als interaktive Adaptive Card. Die Aktion publish bestätigt die aktuelle Vorschau; cancel veröffentlicht nichts. Rufe publish_process_article nur nach publish auf und verwende dabei die serverseitig gespeicherte previewId dieser Vorschau.",
+          nextAction: diagramWarnings.length
+            ? "Kläre die fachlichen Lücken in diagram.warnings vor der Veröffentlichungsbestätigung mit dem Benutzer. Ergänze nur bestätigte Zuordnungen und Fortsetzungen; erzeuge danach eine neue Vorschau."
+            : "Zeige confirmationCardData als interaktive Adaptive Card. Die Aktion publish bestätigt die aktuelle Vorschau; cancel veröffentlicht nichts. Rufe publish_process_article nur nach publish auf und verwende dabei die serverseitig gespeicherte previewId dieser Vorschau.",
         };
         return {
           content: [{ type: "text", text: JSON.stringify(output, null, 2) }],

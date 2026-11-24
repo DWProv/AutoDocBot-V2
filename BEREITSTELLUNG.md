@@ -454,6 +454,7 @@ npm run check:account-link
 npm run check:token-store
 npm run check:connection
 npm run check:security
+npm run check:diagram
 ```
 
 Der MCP-Test benötigt einen laufenden lokalen Server auf Port 3000:
@@ -476,6 +477,7 @@ npm run test:mcp
 | `npm run check:token-store` | Verschlüsselung, erneutes Laden und Löschen des Stores |
 | `npm run check:connection` | ungültige Refresh Tokens, vorübergehende Fehler, Benutzertrennung und parallele Erneuerung |
 | `npm run check:security` | bekannte Sicherheitsbefunde der Produktionsabhängigkeiten; schlägt bereits bei niedriger Schwere fehl |
+| `npm run check:diagram` | beide Richtungen, mehrere Entscheidungen/Ausnahmen, Rücksprünge, Prozessenden, fehlende und ungültige Zuordnungen, lange Texte und Maximalgröße |
 | `npm run test:mcp` | MCP-Verbindung, erwartete Tools und nicht publizierende Vorschau |
 
 ## HTTP-Endpunkte

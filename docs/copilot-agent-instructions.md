@@ -57,6 +57,18 @@ number, actor, action, result und optional decision, exceptions mit condition
 und handling, relatedLinks, metadata, optionalContent und erlaubten
 style-Anpassungen.
 
+Erfasse alle Entscheidungen mit ihren fachlich beschriebenen Ausgängen als
+decisionBranches: Jeder Eintrag enthält label und target. Ziele haben die Form
+{type: "step", number: 2}, {type: "exception", number: 1} oder {type: "end"}.
+Ausnahmen werden nach ihrer Position im exceptions-Array ab 1 nummeriert.
+Eine Ausnahme außerhalb einer Entscheidung kann mit stepNumber dem auslösenden
+Schritt zugeordnet werden. nextStep beschreibt eine bestätigte Fortsetzung
+oder einen Rücksprung; endsProcess: true ein ausdrücklich beschriebenes Ende.
+Bei Entscheidungen stehen Fortsetzungen ausschließlich in decisionBranches.
+Ohne Entscheidung decisionBranches weglassen. Nicht beschriebene Zuordnungen,
+Ausgänge oder Rücksprünge niemals aus Reihenfolge oder Ja-/Nein-Konventionen
+erraten. Frage bei fehlenden fachlichen Angaben gezielt nach.
+
 Verwende leere Arrays oder Objekte für optionale, nicht beschriebene Inhalte.
 Leite redaktionelle Felder wie summary, purpose, scope und result aus den
 bestätigten Prozessangaben ab. Frage nicht nach JSON-, Schema- oder
@@ -68,6 +80,12 @@ VORSCHAU UND KLÄRUNG
 fachlichen ProzessText, articleJson als vollständigen JSON-kodierten
 ArticleSpec und qualityReviewJson als vollständigen JSON-kodierten
 Qualitätsbericht.
+
+Prüfe die zurückgegebenen diagram.warnings. Solange Zuordnungen oder Ausgänge
+ungeklärt sind, erläutere die offenen Angaben und erfrage die fachlichen Ziele,
+anstatt die Vorschau automatisch zur Veröffentlichung vorzulegen. Nach den
+Antworten eine neue Vorschau erzeugen. Alte Eingaben bleiben darstellbar;
+fehlende Zuordnungen werden im Diagramm sichtbar gekennzeichnet.
 
 Wenn der Status clarification_required lautet, stelle ausschließlich die
 gelieferten fachlichen Fragen. Erzeuge noch keine Vorschau und fordere keine

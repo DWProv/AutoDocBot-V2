@@ -85,6 +85,7 @@ try {
   const previewOutput = preview.structuredContent as
     | {
         previewId?: string;
+        diagram?: { decisionCount?: number; exceptionCount?: number; warnings?: unknown[] };
         confirmationCardData?: {
           schemaVersion?: string;
           cardInstanceId?: string;
@@ -92,6 +93,7 @@ try {
           title?: string;
           rolesText?: string;
           stepsText?: string;
+          exceptionsText?: string;
           confirmAction?: string;
           cancelAction?: string;
         };
@@ -110,6 +112,30 @@ try {
     cardData.cancelAction !== "cancel"
   ) {
     throw new Error("Die Vorschau enthält keine konsistenten Daten für die Bestätigungskarte.");
+  }
+  if (previewOutput.diagram?.decisionCount !== 1 || previewOutput.diagram.exceptionCount !== 1 ||
+      previewOutput.diagram.warnings?.length !== 0 || !cardData.stepsText.includes("Nein → Ausnahme 1") ||
+      !cardData.exceptionsText?.includes("Weiter zu Schritt 1")) {
+    throw new Error("Vorschau, Diagramm und Bestätigungskarte enthalten nicht dieselben Prozessverbindungen.");
+  }
+
+  const legacySpec = onboardingSampleSpec();
+  delete legacySpec.steps[0]!.decisionBranches;
+  const legacyPreview = await client.callTool({
+    name: "preview_process_article",
+    arguments: {
+      sourceText: "HR meldet den Eintritt fünf Arbeitstage vorher. Die IT erstellt das Benutzerkonto.",
+      articleJson: JSON.stringify(legacySpec),
+      qualityReviewJson: JSON.stringify({ contradictions: [], missingResponsibilities: [], openQuestions: [], assumptions: [] }),
+    },
+  });
+  const legacyOutput = legacyPreview.structuredContent as {
+    diagram?: { warnings?: string[] }; nextAction?: string;
+    confirmationCardData?: { diagramWarningsText?: string };
+  } | undefined;
+  if (legacyPreview.isError || !legacyOutput?.diagram?.warnings?.length ||
+      !legacyOutput.nextAction?.includes("Kläre") || !legacyOutput.confirmationCardData?.diagramWarningsText) {
+    throw new Error("Fehlende Diagrammzuordnungen werden nicht zur fachlichen Klärung zurückgegeben.");
   }
 
   const structureRetry = await client.callTool({

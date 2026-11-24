@@ -24,6 +24,16 @@ export const articleSpecSchema = z.object({
         action: z.string().trim().min(5).max(1_000),
         result: z.string().trim().min(2).max(1_000),
         decision: z.string().trim().min(2).max(500).optional(),
+        decisionBranches: z.array(z.object({
+          label: z.string().trim().min(1).max(150),
+          target: z.discriminatedUnion("type", [
+            z.object({ type: z.literal("step"), number: z.number().int().min(1) }),
+            z.object({ type: z.literal("exception"), number: z.number().int().min(1) }),
+            z.object({ type: z.literal("end") }),
+          ]),
+        })).min(1).max(12).optional(),
+        nextStep: z.number().int().min(1).optional(),
+        endsProcess: z.boolean().optional(),
       }),
     )
     .min(1)
@@ -33,6 +43,9 @@ export const articleSpecSchema = z.object({
       z.object({
         condition: z.string().trim().min(3).max(500),
         handling: z.string().trim().min(3).max(1_000),
+        stepNumber: z.number().int().min(1).optional(),
+        nextStep: z.number().int().min(1).optional(),
+        endsProcess: z.boolean().optional(),
       }),
     )
     .max(30)
@@ -115,6 +128,41 @@ export function validateArticleSpec(input: unknown): ArticleSpec {
 
   if (actualNumbers.some((number, index) => number !== expectedNumbers[index])) {
     throw new Error("Prozessschritte müssen lückenlos bei 1 beginnen.");
+  }
+
+  const checkStep = (number: number | undefined, context: string) => {
+    if (number !== undefined && !actualNumbers.includes(number)) {
+      throw new Error(`${context}: Schritt ${number} existiert nicht.`);
+    }
+  };
+  for (const step of spec.steps) {
+    checkStep(step.nextStep, `Schritt ${step.number}`);
+    if (step.nextStep !== undefined && step.endsProcess) {
+      throw new Error(`Schritt ${step.number}: Fortsetzung und Prozessende widersprechen sich.`);
+    }
+    if (step.decision && (step.nextStep !== undefined || step.endsProcess)) {
+      throw new Error(`Schritt ${step.number}: Ziele einer Entscheidung gehören in decisionBranches.`);
+    }
+    if (step.decisionBranches && !step.decision) {
+      throw new Error(`Schritt ${step.number}: Entscheidungszweige benötigen eine Entscheidung.`);
+    }
+    const labels = new Set<string>();
+    for (const branch of step.decisionBranches ?? []) {
+      const label = branch.label.toLocaleLowerCase("de-DE");
+      if (labels.has(label)) throw new Error(`Schritt ${step.number}: Zweigbeschriftungen müssen eindeutig sein.`);
+      labels.add(label);
+      if (branch.target.type === "step") checkStep(branch.target.number, `Zweig ${branch.label}`);
+      if (branch.target.type === "exception" && !spec.exceptions[branch.target.number - 1]) {
+        throw new Error(`Zweig ${branch.label}: Ausnahme ${branch.target.number} existiert nicht.`);
+      }
+    }
+  }
+  for (const [index, exception] of spec.exceptions.entries()) {
+    checkStep(exception.stepNumber, `Ausnahme ${index + 1}`);
+    checkStep(exception.nextStep, `Ausnahme ${index + 1}`);
+    if (exception.nextStep !== undefined && exception.endsProcess) {
+      throw new Error(`Ausnahme ${index + 1}: Fortsetzung und Prozessende widersprechen sich.`);
+    }
   }
 
   return spec;
