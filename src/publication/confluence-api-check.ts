@@ -3,6 +3,7 @@ import { createConfluencePublicationApi, ConfluenceApiError, type PublicationPag
 
 const calls: Array<{ url: URL; init: RequestInit }> = [];
 const draft: PublicationPage = { id: "1", title: "Entwurf", status: "draft", spaceId: "space", ownerId: "account", version: { number: 1 } };
+let published = false;
 const fake: typeof fetch = async (input, init = {}) => {
   const url = new URL(String(input)); calls.push({ url, init });
   assert.equal((init.headers as Record<string, string>).authorization, "Bearer synthetic-token");
@@ -36,20 +37,27 @@ const fake: typeof fetch = async (input, init = {}) => {
     const body = JSON.parse(String(init.body));
     assert.equal(body.id, "1"); assert.equal(body.status, "current"); assert.equal(body.version.number, 1, "Die erste Veröffentlichung eines Entwurfs muss Version 1 verwenden");
     assert.equal(body.version.message, "marker");
+    published = true;
     return Response.json({ ...draft, status: "current" });
   }
-  assert.equal(url.searchParams.get("get-draft"), "true");
   assert.equal(url.searchParams.get("body-format"), "storage");
-  return Response.json(draft);
+  if (!url.searchParams.has("get-draft")) {
+    return published ? Response.json({ ...draft, status: "current" }) : new Response(null, { status: 404 });
+  }
+  assert.equal(url.searchParams.get("get-draft"), "true");
+  assert.equal(url.searchParams.get("status"), "draft");
+  return published ? new Response(null, { status: 404 }) : Response.json(draft);
 };
 const api = createConfluencePublicationApi({ cloudId: "cloud", spaceId: "space", accessToken: "synthetic-token", fetch: fake });
 assert.equal((await api.findPages("Zielseite")).length, 1);
 assert.equal((await api.findDrafts("Entwurf"))[0]?.authorId, "account");
 await api.createDraft("Entwurf", "<p>Inhalt</p>");
-await api.getPage("1");
+assert.equal((await api.getPage("1")).status, "draft");
 await api.putDiagram("1", "stable.svg", "<svg/>");
 assert.equal((await api.attachments("1")).length, 1);
 await api.publish(draft, "Titel", "body", "marker");
+assert.equal((await api.getPage("1")).status, "current", "Erfolgskontrolle fragt nach dem Publishing die veröffentlichte Seite ab");
+assert(!calls.at(-1)!.url.searchParams.has("get-draft"));
 assert.equal(calls.filter(c => c.init.method === "POST").length, 1);
 
 let legacyCalls = 0;

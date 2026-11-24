@@ -101,7 +101,16 @@ export function createConfluencePublicationApi(options: {
       headers: { "content-type": "application/json" }, body: JSON.stringify({
         spaceId: options.spaceId, status: "draft", title, body: { representation: "storage", value: body },
       }) }),
-    getPage: (id) => page(`api/v2/pages/${encodeURIComponent(id)}?body-format=storage&get-draft=true&status=current&status=draft`),
+    getPage: async (id) => {
+      // get-draft=true returns 404 once a never-published draft is published.
+      // Prefer the current page, then explicitly resolve an unpublished draft.
+      const path = `api/v2/pages/${encodeURIComponent(id)}?body-format=storage`;
+      try { return await page(path); }
+      catch (error) {
+        if (!(error instanceof ConfluenceApiError) || error.status !== 404) throw error;
+        return page(`${path}&get-draft=true&status=draft`);
+      }
+    },
     putDiagram: async (pageId, name, svg) => {
       const form = new FormData();
       form.append("file", new Blob([svg], { type: "image/svg+xml" }), name);

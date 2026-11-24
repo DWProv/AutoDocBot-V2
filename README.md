@@ -586,6 +586,9 @@ Tokens werden nicht an Copilot zurückgegeben und nicht in Git gespeichert. Sie
 liegen verschlüsselt im persistenten `/data`-Token-Store.
 
 Ein noch nie veröffentlichter Entwurf wird mit `version.number: 1` veröffentlicht.
+Die Statuskontrolle liest zunächst die veröffentlichte Seite und fragt nur bei
+HTTP 404 ausdrücklich den Entwurf ab. Dadurch wird eine erfolgreiche Publikation
+nicht wegen eines inzwischen verschwundenen Entwurfs als Fehler gemeldet.
 Der Entwurfszähler dient separat als Schutz gegen fremde Änderungen; er wird
 nicht als veröffentlichte Versionsnummer hochgezählt. Auch die Wiederaufnahme
 nach verlorener Antwort prüft die erste veröffentlichte Version 1. HTTP 400,
