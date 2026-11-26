@@ -6,6 +6,25 @@ Adaptive Card in Copilot Studio vorgesehen. Der MCP-Server erzeugt nicht selbst
 den sichtbaren Button: Darstellung, Verzweigung und Toolaufruf werden im
 Copilot-Thema verdrahtet.
 
+## Aktualisierung bestehender Seiten ab 0.1.7
+
+Die gleichen Themenvariablen und Freigaberegeln gelten für Aktualisierungen.
+`confirmationCardData.summary` enthält bei einer Aktualisierung ausdrücklich
+Seiten-ID, bisherigen Titel, Ausgangsversion, geplante Version und den Hinweis
+auf den vollständigen Ersatz des Seiteninhalts. Diesen Wert vollständig in
+`PreviewSummary` übernehmen und in der Karte anzeigen; nicht kürzen oder durch
+eine selbst erzeugte Kurzfassung ersetzen. Zusätzliche Felder `operation` und
+`updateTarget` stehen zur Verfügung. `heading` nennt die Aktualisierung.
+Die bestehende Kartenaktion `publish` bestätigt genau diese Vorschau. Sie
+übergibt keine frei änderbare Seiten-ID oder Versionsnummer an das Schreibtool.
+
+Vorher müssen `read_process_article` und `preview_process_article` mit der
+zurückgegebenen `updateSourceId` ausgeführt werden. Bei
+`publication_revision_conflict` ist die alte Bestätigung nicht für einen neu
+eingelesenen Stand nutzbar: Seite neu lesen, Unterschiede abstimmen, neue
+Vorschau und neue Kartenbestätigung. Ein `publication_busy` ist dagegen noch
+kein inhaltlicher Konflikt.
+
 ## Zielablauf
 
 1. Der Agent ruft `preview_process_article` auf.

@@ -2,7 +2,7 @@
 
 AutoDocBot V2 ist ein End-to-End-verifizierter Proof of Concept für einen Copilot-Agenten, der frei formulierte Prozessbeschreibungen in konsistente Confluence-Prozessartikel umwandelt. Der Agent strukturiert den Inhalt, wendet einen verbindlichen und zugleich anpassbaren Styleguide an, erzeugt ein SVG-Prozessdiagramm und veröffentlicht den bestätigten Artikel über einen MCP-Server im Namen des angemeldeten Atlassian-Benutzers.
 
-> Dokumentationsstand: 25. August 2026, Version `0.1.6`. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, Copilot Studio, semantische Vorprüfung, agentengesteuerte Strukturreparatur, verschlüsselte Benutzerverbindungen, ein fest begrenzter Ziel-Space, einmal verwendbare Kontoverknüpfungslinks, Adaptive-Card-Bestätigung im Chat, Azure Container Apps sowie die bestätigte Veröffentlichung eines Artikels mit SVG-Diagramm wurden praktisch verifiziert.
+> Dokumentationsstand: 26. November 2026, Version `0.1.7`. Die Aktualisierungsfunktion ist lokal mit simulierten Confluence-Antworten getestet; eine Live-Abnahme und Bereitstellung dieses Stands stehen noch aus. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, Copilot Studio, semantische Vorprüfung, agentengesteuerte Strukturreparatur, verschlüsselte Benutzerverbindungen, ein fest begrenzter Ziel-Space, einmal verwendbare Kontoverknüpfungslinks, Adaptive-Card-Bestätigung im Chat, Azure Container Apps sowie die bestätigte Veröffentlichung eines Artikels mit SVG-Diagramm wurden praktisch verifiziert.
 
 Diese README beschreibt Zielbild, Architektur, Funktionsweise und
 Sicherheitsmodell. Die ausführbaren Schritte für Installation, Konfiguration,
@@ -49,7 +49,7 @@ Der Copilot-Agent übernimmt daraus folgende Aufgaben:
 
 - MCP-Server auf Basis von Streamable HTTP
 - MCP-Anfragen sind auf 1 MiB begrenzt; vor der Tool-Validierung sind höchstens 128 Eingabeelemente erlaubt
-- sechs MCP-Tools für Verbindung, Styleguide, Vorschau, Veröffentlichung, Auftragsstatus und Meeting-Vorbereitung
+- sieben MCP-Tools für Verbindung, Styleguide, bestehende Seiten, Vorschau, Veröffentlichung, Auftragsstatus und Meeting-Vorbereitung
 - Atlassian OAuth 2.0 (3LO) mit Benutzerdelegation und Refresh Tokens
 - Veröffentlichung unter der Identität des verbundenen Atlassian-Benutzers
 - Ziel-Site-Prüfung und ausschließliche Veröffentlichung im fest konfigurierten Ziel-Space
@@ -147,7 +147,7 @@ nicht erneut erläutert.
 | Begriff | Einfach erklärt | Bedeutung für AutoDocBot |
 |---|---|---|
 | **Copilot-Agent** | Ein Sprachmodell mit Arbeitsanweisung und Werkzeugkasten. Es versteht die Benutzeranfrage und entscheidet, welches Werkzeug als Nächstes benötigt wird. | Der Agent führt das Gespräch, erkennt Prozessinformationen, stellt Rückfragen und ruft die MCP-Tools auf. Er ist nicht selbst der Confluence-Server. |
-| **MCP und MCP-Server** | MCP ist eine standardisierte Steckverbindung zwischen einem KI-Agenten und externen Werkzeugen. Der Server beschreibt, welche Werkzeuge existieren und welche Ein- und Ausgaben sie erwarten. | AutoDocBot stellt über MCP sechs klar begrenzte Werkzeuge bereit. Copilot muss dadurch keine proprietäre Confluence-Integration direkt implementieren. |
+| **MCP und MCP-Server** | MCP ist eine standardisierte Steckverbindung zwischen einem KI-Agenten und externen Werkzeugen. Der Server beschreibt, welche Werkzeuge existieren und welche Ein- und Ausgaben sie erwarten. | AutoDocBot stellt über MCP sieben klar begrenzte Werkzeuge bereit. Copilot muss dadurch keine proprietäre Confluence-Integration direkt implementieren. |
 | **MCP-Tool und Tool Discovery** | Ein Tool ist eine einzelne erlaubte Aktion, ähnlich einer beschrifteten Taste. Bei der Tool Discovery fragt der Agent zunächst, welche Tasten verfügbar sind und wie sie bedient werden. | Die Werkzeuge prüfen Verbindung, Styleguide, Vorschau, Veröffentlichung, Auftragsstatus und Meeting-Auswertung. |
 | **Delegierte Benutzeridentität** | Der Bot arbeitet nicht mit einem allmächtigen Sammelkonto, sondern erhält die Erlaubnis, eine konkrete Aktion im Namen des angemeldeten Benutzers auszuführen. | Confluence sieht den verbundenen Atlassian-Benutzer als Autor. AutoDocBot kann nur innerhalb dessen Berechtigungen arbeiten. |
 | **Zwei OAuth-Beziehungen** | AutoDocBot passiert zwei getrennte Türsteher: Microsoft prüft, wer den Agenten benutzt; Atlassian prüft, was AutoDocBot für diese Person in Confluence tun darf. | Das Entra-Token schützt den MCP-Zugriff. Das separate Atlassian-3LO-Token autorisiert anschließend die Confluence-Aufrufe. Eine Zustimmung ersetzt nicht die andere. |
@@ -251,11 +251,80 @@ Der Streamable-HTTP-Endpunkt befindet sich unter `/mcp` und akzeptiert `POST`.
 | Tool | Confluence-Schreibzugriff | Zweck |
 |---|---:|---|
 | `get_confluence_connection` | nein | prüft Benutzer, Ziel-Site und fest konfigurierten Ziel-Space oder liefert einen signierten Einmal-Verknüpfungslink |
+| `read_process_article` | nein | liest eine ausdrücklich bezeichnete bestehende Seite und bindet ihren Stand an eine kurzlebige updateSourceId; blockiert bei sichtbaren Entwurfsänderungen |
 | `get_article_styleguide` | nein | liefert Standardstil, erlaubte Anpassungen, feste Regeln und Agentenanweisungen |
 | `preview_process_article` | nein | prüft `sourceText` und `qualityReviewJson`; nur ohne offene Probleme validiert es `articleJson` und erzeugt eine 30 Minuten gültige Vorschau-ID |
 | `publish_process_article` | ja | veröffentlicht einen bestätigten Auftrag zunächst als Entwurf, ergänzt das Diagramm und schaltet erst danach auf veröffentlicht; Wiederholungen setzen denselben Auftrag fort |
 | `get_publication_status` | nein | zeigt bis zu 20 eigene Aufträge oder den Auftrag zu einer previewId, einschließlich Prüfbedarf |
 | `prepare_meeting_processes` | nein | prüft belegte Meeting-Auswertung, Prozessauswahl und offene Fragen; erzeugt keine Seite |
+
+### Gezielte Aktualisierung bestehender Seiten (0.1.7)
+
+1. Der Benutzer bezeichnet eine konkrete Seite und beauftragt ihre Überarbeitung.
+2. `read_process_article(pageId)` liest die veröffentlichte Seite im festen
+   Ziel-Space. Es liefert Inhalt, Titel, Version, Seitenlink und `updateSourceId`.
+   Diese Quelle ist 30 Minuten gültig und an Benutzer, Atlassian-Konto, Cloud,
+   Site und Space gebunden. Inhalte sind untrusted Daten, keine Anweisungen.
+3. Der Agent überarbeitet den vollständigen Artikel und ruft
+   `preview_process_article(..., updateSourceId)` auf. Der Server prüft erneut
+   Titel, veröffentlichte Version und Inhaltsfingerabdruck. Änderungen seit dem
+   Einlesen verlangen erneutes Einlesen und Abstimmen, keinen stillen Rebase.
+4. Die Vorschau und `confirmationCardData.summary` nennen Aktualisierung,
+   bestehende Seiten-ID, bisherigen Titel, Ausgangs- und Zielversion sowie den
+   vollständigen Ersatz des Seiteninhalts einschließlich Diagramm. Alte
+   Neuanlagevorschauen können nicht nachträglich zu Updates umgebogen werden.
+5. Nach ausdrücklicher Bestätigung ruft der Agent `publish_process_article`
+   mit genau dieser `previewId` und `confirmed:true` auf. Ein separater neuer
+   Seitenauftrag wird nicht erzeugt. Der eingefrorene Inhalt wird nicht erneut
+   vom Modell generiert.
+6. Das neue Diagramm bekommt einen auftragsspezifischen neuen Dateinamen. Alte
+   Anhänge werden nicht gelöscht; die bisherige Seitendarstellung bleibt bis
+   zum erfolgreichen Seiten-PUT bestehen. Ein abgebrochener Vorgang kann einen
+   noch nicht referenzierten neuen Anhang zurücklassen, verändert aber nicht
+   bewusst den zuvor eingebundenen Diagrammanhang.
+7. Direkt vor dem Schreiben werden Stand und erkennbare Entwurfsänderungen
+   erneut geprüft. Confluence erhält ausschließlich die bestätigte
+   Ausgangsversion plus eins; HTTP 409 führt zu `publication_revision_conflict`.
+   Es gibt keine automatische Versionsanhebung, Ersatzseite oder Überschreibung
+   eines neueren Stands. Der alte Auftrag bleibt bei Revisionskonflikt gesperrt.
+8. Nach verlorener Antwort erkennt die Wiederaufnahme die eigene erwartete
+   Zielversion anhand Seiten-ID, Auftragsmarkierung, Autor und Diagrammreferenz.
+   Nach Erfolg liefern Wiederholungen dasselbe gespeicherte Ergebnis statt
+   einer weiteren Seitenversion. Zwischenzeitliche fremde Folgeversionen werden
+   nicht überschrieben.
+
+Seiten-ID, vorhandener Seiteninhaber und Seitenposition werden beim PUT nicht
+neu zugewiesen. Der Artikelinhalt wird vollständig ersetzt, kein automatischer
+Merge mit beliebigem Confluence-Markup ausgeführt. Nicht ausdrücklich zu
+ändernde Inhalte müssen beim Erstellen der Vorschau erhalten oder der Ersatz
+vorher geklärt werden. Das Lesetool begrenzt den Ausgangsinhalt auf 100.000 Byte.
+Unbegonnene Vorschauen und Quellbindungen verfallen nach 30 Minuten; bereits
+begonnene bestätigte Updates bleiben wie Neuanlagen fortsetzbar.
+
+**Grenze des Entwurfsschutzes:** Erkannte gemeinsame Entwürfe blockieren das
+Einlesen, die Vorschau und das Schreiben. Fehler der Entwurfsabfrage werden
+nicht als Entwurfsfreiheit behandelt (nur 404 bedeutet keinen auffindbaren
+Entwurf). Confluence bietet über diesen API-Weg keine atomare Sperre gegen
+neue kollaborative Entwurfsänderungen zwischen letzter Prüfung und Seiten-PUT.
+Die Versionsbedingung schützt veröffentlichte Versionen; gegen in diesem
+engen Zeitfenster neu begonnene unveröffentlichte Bearbeitung gibt es keine
+vollständige Garantie. Für kritische Inhalte ist eine abgestimmte
+Bearbeitungspause nötig. API-Verhalten und Entwurfserkennung vor Livefreigabe
+in der betreffenden Site abnehmen.
+
+Die ausdrückliche Gesprächs-/Kartenbestätigung bleibt eine Agentenregel;
+serverseitig wird weiterhin `confirmed:true` verlangt, kein unabhängiger
+Nachweis des Chatverlaufs. Auch die neuen Werkzeuge ändern das nicht.
+
+Copilot Studio: MCP-Werkzeuge neu laden, `read_process_article` freigeben und die
+[Agentenanweisungen](docs/copilot-agent-instructions.md) aktualisieren. Die
+bestehende Bestätigungskarte verwendet unverändert `PreviewSummary`; dieser
+Wert enthält bei Updates die Ziel- und Versionswarnung und muss vollständig
+sichtbar bleiben.
+
+Prüfungen: `npm run check:publication`, `npm run check:publication-api` und
+`npm run check:update-mcp`. Die Tests simulieren Confluence einschließlich
+Versionskonflikten und verlorenen Antworten und schreiben keine echten Seiten.
 
 ### Fortsetzbare Veröffentlichung
 
@@ -689,6 +758,7 @@ Kundentenant konfigurierten Aufbewahrungs-, Compliance- und Löschrichtlinien.
 |---|---|---|---|---|
 | Benutzereingabe und Copilot-Unterhaltung | Eingabe im Copilot-Chat; Verarbeitung zunächst durch Microsoft Copilot Studio | Der Agent analysiert den Prozess und erzeugt `sourceText`, `articleJson` und `qualityReviewJson` | Die Gesprächshistorie liegt außerhalb dieses Repositorys gemäß den Tenant-Richtlinien von Copilot Studio; AutoDocBot speichert die ursprüngliche Unterhaltung nicht dauerhaft | Zugriff und Aufbewahrung müssen über Microsoft-/Power-Platform-Richtlinien geregelt werden |
 | Konsolidierter ProzessText und Qualitätsbericht | Bei jedem Aufruf von `preview_process_article` am MCP-Endpunkt | Prüfung auf typische Konflikte sowie Übernahme der Agentenanalyse | Nur während des Requests im Arbeitsspeicher; `sourceText` und Qualitätsbericht werden nicht in den Token Store geschrieben | Mit Ende des Requests verworfen; Inhalte werden nicht absichtlich protokolliert |
+| Aktualisierungsquelle (updateSourceId, Seiten-ID, Titel, Ausgangsversion, Inhaltsfingerabdruck, Identitätsbindung) | Nach read_process_article | Verhindert stilles Aktualisieren auf einen anderen Stand zwischen Einlesen und Vorschau | Verschlüsselt im Publication Store; 30 Minuten nutzbar, Bereinigung beim nächsten Lese- oder Vorschauaufruf | Kein vollständiger alter Seiteninhalt wird dafür persistiert; an Benutzer und Atlassian-Verbindung gebunden |
 | ArticleSpec, Style, SVG und Veröffentlichungsauftrag | Nach Vorschau bzw. bestätigtem Start | Inhalt einfrieren, Entwurf und Verarbeitungsschritte speichern, fortsetzen und deduplizieren | Verschlüsselt in PUBLICATION_STORE_PATH; ungestartete Vorschauen 30 Minuten nutzbar, Bereinigung beim nächsten Vorschauaufruf; offene Aufträge bis Abschluss oder administrativer Bereinigung; nach Erfolg nur Metadaten/Ergebnis | Entra-/Atlassian-/Zielbereichsbindung; derselbe Auftrag kann fortgesetzt werden; keine automatische Löschung abgeschlossener Deduplizierungsmetadaten |
 | Entra Access Token und Identitätsclaims | Copilot sendet bei jedem MCP-Aufruf einen Bearer-Token | Signatur, Issuer, Audience, Tenant, Benutzer, Scope und Client-ID werden geprüft | Token wird nicht von AutoDocBot persistiert; Claims existieren während der Request-Verarbeitung im Arbeitsspeicher | Transport über HTTPS; keine beabsichtigte Token-Protokollierung |
 | Signierter Atlassian-Verknüpfungslink | `get_confluence_connection` erzeugt ihn bei fehlender Verbindung | HMAC-Prüfung, Benutzerbindung, Ablaufprüfung und einmaliger Verbrauch vor dem Redirect; ein neuer Link ersetzt ältere Links desselben Benutzers | Zehn Minuten nutzbar; Nonce anschließend spätestens mit der minütlichen Bereinigung, beim ersten Öffnen oder Neustart aus dem Arbeitsspeicher entfernt | Vertraulicher Bearer-Link; Weitergabe vor der ersten Nutzung bleibt ein Restrisiko |
@@ -710,7 +780,7 @@ werden.
 - Der Betrieb bleibt auf eine Replica begrenzt; OAuth-State, Dateisperren und Storage-Verhalten müssen vor einer Skalierung gesondert abgenommen werden.
 - Ein unklarer Anlageausgang ohne eindeutig auffindbaren Entwurf benötigt eine manuelle Zuordnung; der Bot legt dann keine neue Seite an.
 - Die externe API-Pipeline ist nicht transaktional. Unvollständige technische Entwürfe können bei Fehlern zurückbleiben, werden vom Bot aber nicht veröffentlicht. API- und Storage-Verhalten benötigen vor Produktivfreigabe einen Live-Abnahmetest.
-- Gleichnamige sichtbare veröffentlichte Seiten führen zu einem Konflikt. Bestehende Seiten werden nicht automatisch aktualisiert; nicht sichtbare oder fremde Entwürfe sind keine global prüfbare Deduplizierungsquelle.
+- Gleichnamige sichtbare veröffentlichte Seiten führen zu einem Konflikt. Bestehende Seiten können nur gezielt nach Einlesen, versionsgebundener Vorschau und neuer Bestätigung aktualisiert werden; nicht sichtbare oder fremde Entwürfe sind keine global prüfbare Deduplizierungsquelle.
 - Die Sichtbarkeit des Ziel-Spaces wird beim Atlassian-Login aus den ersten 100 gelieferten Spaces geprüft. Die Liste ist nicht paginiert und spätere Berechtigungsänderungen werden nicht aktiv synchronisiert; Confluence prüft sie beim API-Aufruf erneut.
 - Die ausdrückliche Chatbestätigung ist eine Agentenregel. Der Server verlangt `confirmed: true`, besitzt aber keinen unabhängigen Nachweis des Chatverlaufs.
 - Ein Verknüpfungslink ist einmal verwendbar, bleibt bis zur ersten Nutzung aber ein weiterleitbares Bearer-Geheimnis. Eine zusätzliche Browser-Anmeldung mit Entra ist noch nicht umgesetzt.

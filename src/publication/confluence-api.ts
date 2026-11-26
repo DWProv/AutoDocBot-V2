@@ -13,7 +13,9 @@ export interface PublicationApi {
   findDrafts(title: string): Promise<PublicationPage[]>;
   createDraft(title: string, body: string): Promise<PublicationPage>;
   getPage(id: string): Promise<PublicationPage>;
-  putDiagram(pageId: string, name: string, svg: string): Promise<void>;
+  getDraft(id: string): Promise<PublicationPage | undefined>;
+  putDiagram(pageId: string, name: string, svg: string, status?: "draft" | "current"): Promise<void>;
+  update(page: PublicationPage, title: string, body: string, message: string): Promise<void>;
   attachments(pageId: string): Promise<PublicationAttachment[]>;
   publish(page: PublicationPage, title: string, body: string, message: string): Promise<void>;
 }
@@ -111,12 +113,30 @@ export function createConfluencePublicationApi(options: {
         return page(`${path}&get-draft=true&status=draft`);
       }
     },
-    putDiagram: async (pageId, name, svg) => {
+    getDraft: async (id) => {
+      try { return await page(`api/v2/pages/${encodeURIComponent(id)}?body-format=storage&get-draft=true&status=draft`); }
+      catch (error) {
+        if (error instanceof ConfluenceApiError && error.status === 404) return undefined;
+        throw error;
+      }
+    },
+    update: async (current, title, body, message) => {
+      if (current.status !== "current" || !Number.isSafeInteger(current.version.number) || current.version.number < 1) {
+        throw new Error("Nur veröffentlichte Seiten mit gültiger Version können aktualisiert werden.");
+      }
+      await request(endpoint(`api/v2/pages/${encodeURIComponent(current.id)}`), {
+        method: "PUT", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: current.id, status: "current", title,
+          body: { representation: "storage", value: body },
+          version: { number: current.version.number + 1, message } }),
+      });
+    },
+    putDiagram: async (pageId, name, svg, status = "draft") => {
       const form = new FormData();
       form.append("file", new Blob([svg], { type: "image/svg+xml" }), name);
       form.append("minorEdit", "true");
       form.append("comment", "AutoDocBot-Prozessdiagramm");
-      await request(endpoint(`rest/api/content/${encodeURIComponent(pageId)}/child/attachment?status=draft`), {
+      await request(endpoint(`rest/api/content/${encodeURIComponent(pageId)}/child/attachment?status=${status}`), {
         method: "PUT", headers: { "X-Atlassian-Token": "nocheck" }, body: form,
       });
     },

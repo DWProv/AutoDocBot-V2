@@ -21,6 +21,7 @@ try {
   const expectedTools = [
     "get_confluence_connection",
     "get_article_styleguide",
+    "read_process_article",
     "preview_process_article",
     "publish_process_article",
     "get_publication_status",

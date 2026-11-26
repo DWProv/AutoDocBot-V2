@@ -78,4 +78,26 @@ await assert.rejects(unsafe.findPages("Titel")); assert.equal(unsafeCalls, 1);
 const failed = createConfluencePublicationApi({ cloudId: "cloud", spaceId: "space", accessToken: "synthetic-token",
   fetch: async () => new Response("sensitive-response-content", { status: 403 }) });
 await assert.rejects(failed.getPage("1"), (error: unknown) => error instanceof ConfluenceApiError && error.status === 403 && !error.message.includes("sensitive"));
+const updateCalls: Array<{ url: URL; init: RequestInit }> = [];
+const updater = createConfluencePublicationApi({ cloudId: "cloud", spaceId: "space", accessToken: "synthetic-token", fetch: async (input, init = {}) => {
+  const url = new URL(String(input)); updateCalls.push({ url, init });
+  if (init.method === "PUT" && url.pathname.endsWith("/child/attachment")) {
+    assert.equal(url.searchParams.get("status"), "current"); return Response.json({});
+  }
+  if (init.method === "PUT") {
+    const body = JSON.parse(String(init.body));
+    assert.equal(body.version.number, 8); assert.equal(body.id, "42"); assert.equal(body.status, "current");
+    assert.equal(body.ownerId, undefined); assert.equal(body.parentId, undefined); assert.equal(body.spaceId, undefined);
+    return Response.json({});
+  }
+  assert.equal(url.searchParams.get("get-draft"), "true"); assert.equal(url.searchParams.get("status"), "draft");
+  return new Response(null, { status: 404 });
+} });
+assert.equal(await updater.getDraft("42"), undefined);
+await updater.putDiagram("42", "new.svg", "<svg/>", "current");
+await updater.update({ ...draft, id: "42", status: "current", version: { number: 7 } }, "Titel", "body", "marker");
+assert.equal(updateCalls.filter(c => c.init.method === "POST").length, 0);
+await assert.rejects(updater.update(draft, "Titel", "body", "marker"));
+const inaccessibleDraft = createConfluencePublicationApi({ cloudId: "cloud", spaceId: "space", accessToken: "synthetic-token", fetch: async () => new Response(null, { status: 403 }) });
+await assert.rejects(inaccessibleDraft.getDraft("42"), (error: unknown) => error instanceof ConfluenceApiError && error.status === 403);
 console.log("Confluence-Adapter geprüft: Entwurf, paginierter Abgleich, stabiler Attachment-PUT, Versionsnummer, Zeitlimit und keine Weitergabe von Tokens an fremde Hosts.");
