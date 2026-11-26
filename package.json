@@ -1,6 +1,6 @@
 {
   "name": "autodocbot-v2",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,6 +19,7 @@
     "check:diagram": "tsx src/diagram/process-svg-check.ts",
     "check:publication": "tsx src/publication/publication-check.ts",
     "check:update-mcp": "npm run build && node dist/mcp/update-check.js",
+    "check:draft-comparison": "tsx src/publication/draft-comparison-check.ts",
     "check:publication-api": "tsx src/publication/confluence-api-check.ts",
     "check:meeting": "tsx src/article/meeting-check.ts"
   },

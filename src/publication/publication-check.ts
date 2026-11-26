@@ -40,7 +40,7 @@ class FakeApi implements PublicationApi {
     this.onUpdate?.();
     const current = this.pages.get(base.id)!;
     if (current.version.number !== base.version.number) throw new ConfluenceApiError(409);
-    assert(!this.sharedDraft, "Keinen bekannten gemeinsamen Entwurf überschreiben");
+
     this.pages.set(base.id, { ...current, title, body: { storage: { value: body } }, version: { number: base.version.number + 1, message, authorId: "account" } });
     this.onPublish?.();
     if (this.fault === "publish-after") throw new Error("synthetic lost response");
@@ -282,7 +282,7 @@ try {
   for (const point of ["read", "preview", "publish", "upload"] as const) {
     await check(`Gemeinsamer unveröffentlichter Entwurf beim ${point} blockiert Aktualisierung`, async (s, api) => {
       seedUpdatePage(api);
-      const draft = { ...api.pages.get("42")!, status: "draft" };
+      const draft = { ...structuredClone(api.pages.get("42")!), status: "draft", body: { storage: { value: "Unveröffentlichte echte Änderung" } } };
       if (point === "read") {
         api.sharedDraft = draft; await expectProblem(s.readForUpdate("42", context, api), "publication_revision_conflict");
       } else {
@@ -299,6 +299,29 @@ try {
       assert.equal(api.updates, 0); assert.equal(api.creates, 0);
     });
   }
+  for (const point of ["read", "preview", "publish", "upload"] as const) {
+    await check(`Identischer Restentwurf bei ${point}: gleicher Inhalt darf nach Bestätigung aktualisiert werden`, async (s, api) => {
+      seedUpdatePage(api);
+      const draft = { ...structuredClone(api.pages.get("42")!), status: "draft", version: { number: 1 } };
+      if (point === "read") api.sharedDraft = draft;
+      const source = await s.readForUpdate("42", context, api);
+      if (point === "preview") api.sharedDraft = draft;
+      const p = await s.createPreview(onboardingSampleSpec(), "user", { sourceId: source.sourceId, context, api });
+      if (point === "publish") api.sharedDraft = draft;
+      if (point === "upload") api.onUpload = () => { api.sharedDraft = draft; };
+      assert.equal(api.updates + api.uploads, 0);
+      const result = await s.publish(p.previewId, context, api);
+      assert.equal(result.version, 8); assert.equal(api.updates, 1); assert.equal(api.creates, 0);
+    });
+  }
+  await check("Restentwurf wird vor dem Schreiben echt verändert: kein Update", async (s, api) => {
+    seedUpdatePage(api);
+    api.sharedDraft = { ...structuredClone(api.pages.get("42")!), status: "draft" };
+    const p = await prepareUpdate(s, api);
+    api.onUpload = () => { api.sharedDraft!.body!.storage!.value = "Neue unveröffentlichte Änderung"; };
+    await expectProblem(s.publish(p.previewId, context, api), "publication_revision_conflict");
+    assert.equal(api.updates, 0);
+  });
   await check("Unbekannter Entwurfsstatus führt zu Prüfhalt statt unsicherem Update", async (s, api) => {
     const p = await prepareUpdate(s, api); api.getDraft = async () => { throw new ConfluenceApiError(403); };
     await expectProblem(s.publish(p.previewId, context, api), "publication_review_required"); assert.equal(api.updates + api.uploads, 0);

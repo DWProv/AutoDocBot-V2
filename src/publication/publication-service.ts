@@ -10,6 +10,8 @@ import { generateProcessSvg } from "../diagram/process-svg.js";
 import { EncryptedJsonStore } from "../auth/encrypted-json-store.js";
 import { INITIAL_PUBLISHED_VERSION, ConfluenceApiError, type PublicationApi, type PublicationPage } from "./confluence-api.js";
 
+import { isUnchangedDraft } from "./draft-comparison.js";
+
 const attachmentPlaceholder = "AUTODOCBOT_ATTACHMENT_PLACEHOLDER";
 type Snapshot = { spec: ArticleSpec; style: ResolvedStyleGuide; svg: string; bodyTemplate: string };
 type UpdateTarget = { pageId: string; title: string; version: number; bodyHash: string; accountId: string; cloudId: string };
@@ -76,9 +78,11 @@ export class PublicationService {
       !Number.isSafeInteger(page.version?.number) || page.version.number < 1 || page.body?.storage?.value === undefined) {
       throw new PublicationProblem("publication_review_required", "Nur lesbare veröffentlichte Seiten im konfigurierten Ziel-Space können aktualisiert werden.", previewId);
     }
-    // Fail closed: a visible draft may contain other people's unpublished edits.
-    // Confluence does not expose an atomic precondition for collaborative drafts.
-    if (await api.getDraft(pageId)) throw new PublicationProblem("publication_revision_conflict", "Auf dieser Seite liegen unveröffentlichte Änderungen vor. Diese müssen zuerst in Confluence geklärt werden. " + revisionMessage, previewId);
+    // A residual draft may be identical except for a generated built-in info
+    // macro UUID. Anything else (including unreadable or mismatched drafts)
+    // still blocks. Repeated here for reading, preview and pre-write checks.
+    const draft = await api.getDraft(pageId);
+    if (draft && !isUnchangedDraft(page, draft)) throw new PublicationProblem("publication_revision_conflict", "Auf dieser Seite liegen unveröffentlichte Änderungen vor. Diese müssen zuerst in Confluence geklärt werden. " + revisionMessage, previewId);
     return page;
   }
 

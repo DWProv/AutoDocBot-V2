@@ -2,7 +2,7 @@
 
 AutoDocBot V2 ist ein End-to-End-verifizierter Proof of Concept für einen Copilot-Agenten, der frei formulierte Prozessbeschreibungen in konsistente Confluence-Prozessartikel umwandelt. Der Agent strukturiert den Inhalt, wendet einen verbindlichen und zugleich anpassbaren Styleguide an, erzeugt ein SVG-Prozessdiagramm und veröffentlicht den bestätigten Artikel über einen MCP-Server im Namen des angemeldeten Atlassian-Benutzers.
 
-> Dokumentationsstand: 26. November 2026, Version `0.1.7`. Das Backend 0.1.7 ist am 26. November 2026 in Azure bereitgestellt (Revision `git-fb85b0b`). Alle 46 Veröffentlichungs-/Aktualisierungsprüfungen auf Azure-Dateispeicher sowie MCP- und Adaptertests mit simulierten Confluence-Antworten sind erfolgreich. Gesundheitsprüfung 200, anonymer MCP-Zugriff 401. Die Live-Abnahme einer echten Seitenaktualisierung in Teams nach Aktualisieren der Copilot-Werkzeuge und Agentenanweisungen steht noch aus. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, Copilot Studio, semantische Vorprüfung, agentengesteuerte Strukturreparatur, verschlüsselte Benutzerverbindungen, ein fest begrenzter Ziel-Space, einmal verwendbare Kontoverknüpfungslinks, Adaptive-Card-Bestätigung im Chat, Azure Container Apps sowie die bestätigte Veröffentlichung eines Artikels mit SVG-Diagramm wurden praktisch verifiziert.
+> Dokumentationsstand: 26. November 2026, Version `0.1.8` (Restentwurfsvergleich, siehe unten). Das Backend 0.1.7 ist am 26. November 2026 in Azure bereitgestellt (Revision `git-fb85b0b`). Alle 46 Veröffentlichungs-/Aktualisierungsprüfungen auf Azure-Dateispeicher sowie MCP- und Adaptertests mit simulierten Confluence-Antworten sind erfolgreich. Gesundheitsprüfung 200, anonymer MCP-Zugriff 401. Die Live-Abnahme einer echten Seitenaktualisierung in Teams nach Aktualisieren der Copilot-Werkzeuge und Agentenanweisungen steht noch aus. Lokaler Betrieb, Atlassian OAuth 2.0 (3LO), MCP Streamable HTTP, Microsoft-Entra-Authentifizierung, Copilot Studio, semantische Vorprüfung, agentengesteuerte Strukturreparatur, verschlüsselte Benutzerverbindungen, ein fest begrenzter Ziel-Space, einmal verwendbare Kontoverknüpfungslinks, Adaptive-Card-Bestätigung im Chat, Azure Container Apps sowie die bestätigte Veröffentlichung eines Artikels mit SVG-Diagramm wurden praktisch verifiziert.
 
 Diese README beschreibt Zielbild, Architektur, Funktionsweise und
 Sicherheitsmodell. Die ausführbaren Schritte für Installation, Konfiguration,
@@ -301,8 +301,25 @@ vorher geklärt werden. Das Lesetool begrenzt den Ausgangsinhalt auf 100.000 Byt
 Unbegonnene Vorschauen und Quellbindungen verfallen nach 30 Minuten; bereits
 begonnene bestätigte Updates bleiben wie Neuanlagen fortsetzbar.
 
-**Grenze des Entwurfsschutzes:** Erkannte gemeinsame Entwürfe blockieren das
-Einlesen, die Vorschau und das Schreiben. Fehler der Entwurfsabfrage werden
+**Restentwürfe ab 0.1.8:** Der Lesepfad vergleicht den Entwurf bei jedem Einlesen,
+jeder Aktualisierungsvorschau und direkt vor dem Schreiben mit der aktuellen
+veröffentlichten Seite. Nur identischer Storage-Inhalt bei gleicher Seiten-ID,
+Space, Titel, Eigentümer und Elternzuordnung gilt als unveränderter Restentwurf.
+Als einzige Inhaltsausnahme wird der UUID-Wert von `ac:macro-id` am eingebauten
+`info`-Makro beim Vergleich vereinheitlicht. Alle Texte, Parameter, andere
+Attribute, Formatierungen, Links, Diagrammreferenzen und fremden Makros bleiben
+bytegenau vergleichspflichtig. CDATA und Kommentare werden unverändert behandelt;
+unklare Markup-Strukturen führen nicht zu einer Gleichheitsannahme. Der Entwurf
+wird weder gelöscht noch vorab veröffentlicht. Die gespeicherte veröffentlichte
+Ausgangsversion und deren vollständiger Inhaltsfingerabdruck bleiben unverändert
+streng gebunden. Bei jeder erneuten echten Entwurfsänderung wird angehalten.
+Die Reproduktion auf Seite 31490050 zeigte veröffentlichte Version 3 und einen
+Restentwurf mit abweichendem Info-Makro-UUID, sonst identischem Titel und Inhalt.
+Die vollständigen Seiteninhalte werden nicht als Testfixture ins Repository
+übernommen. `npm run check:draft-comparison` prüft synthetische Gegenbeispiele.
+
+**Grenze des Entwurfsschutzes:** Abweichende oder nicht sicher vergleichbare
+Entwürfe blockieren das Einlesen, die Vorschau und das Schreiben. Fehler der Entwurfsabfrage werden
 nicht als Entwurfsfreiheit behandelt (nur 404 bedeutet keinen auffindbaren
 Entwurf). Confluence bietet über diesen API-Weg keine atomare Sperre gegen
 neue kollaborative Entwurfsänderungen zwischen letzter Prüfung und Seiten-PUT.

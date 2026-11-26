@@ -20,7 +20,7 @@ new EncryptedJsonStore(process.env.TOKEN_STORE_PATH!, key).set(userId, {
   cloudId: "cloud", profile: { account_id: "account", name: "Test" }, spaces: [{ id: "space", key: "SP", name: "Space" }],
 });
 let current = { id: "42", title: "Alter Artikel", status: "current", spaceId: "space", ownerId: "owner",
-  version: { number: 7, message: "", authorId: "other" }, body: { storage: { value: "<p>Bestehender Artikel</p>" } } };
+  version: { number: 7, message: "", authorId: "other" }, body: { storage: { value: '<ac:structured-macro ac:name="info" ac:macro-id="ab0972ba-2b48-4120-82b0-a7e0f38df940"><ac:rich-text-body><p>Bestehender Artikel</p></ac:rich-text-body></ac:structured-macro>' } } };
 const files: Array<{ id: string; title: string; fileSize: number }> = [];
 let uploads = 0, updates = 0, authExpired = false;
 const originalFetch = globalThis.fetch;
@@ -46,7 +46,8 @@ globalThis.fetch = async (input, init = {}) => {
     current = { ...current, title: body.title, version: { ...body.version, authorId: "account" }, body: { storage: { value: body.body.value } } };
     updates++; return Response.json(current);
   }
-  if (url.searchParams.has("get-draft")) return new Response(null, { status: 404 });
+  if (url.searchParams.has("get-draft")) return Response.json({ ...current, status: "draft", version: { number: 1 },
+    body: { storage: { value: current.body.storage.value.replace("ab0972ba-2b48-4120-82b0-a7e0f38df940", "36bde395-5085-4786-a59e-134e954d0c0f") } } });
   return Response.json(current);
 };
 const { createPublicationMcpServer } = await import("../server.js");
@@ -81,7 +82,7 @@ try {
   assert.equal(published.output!.pageId, "42"); assert.equal(published.output!.version, 8);
   await call("publish_process_article", { previewId: preview.output!.previewId, confirmed: true });
   assert.equal(updates, 1); assert.equal(uploads, 1);
-  console.log("OK: MCP read → versionsgebundene Aktualisierungskarte → false abgelehnt → true schreibt dieselbe Seite einmal.");
+  console.log("OK: MCP read mit unverändertem Restentwurf → versionsgebundene Aktualisierungskarte → false abgelehnt → true schreibt dieselbe Seite einmal.");
   const read2 = await call("read_process_article", { pageId: "42" });
   const preview2 = await call("preview_process_article", { ...previewArguments, updateSourceId: read2.output!.updateSourceId });
   current = { ...current, version: { ...current.version, number: 9, authorId: "other" }, body: { storage: { value: "Fremde Änderung" } } };

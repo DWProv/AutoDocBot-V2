@@ -3,7 +3,7 @@ export const INITIAL_PUBLISHED_VERSION = 1;
 
 export type PublicationPage = {
   id: string; title: string; status: string; spaceId: string;
-  ownerId?: string; authorId?: string;
+  ownerId?: string; authorId?: string; parentId?: string; parentType?: string;
   version: { number: number; message?: string; authorId?: string };
   body?: { storage?: { value?: string } };
 };

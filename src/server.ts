@@ -633,7 +633,7 @@ export function createPublicationMcpServer(identity: McpIdentity): McpServer {
   const mcp = new McpServer(
     {
       name: "autodocbot-v2",
-      version: "0.1.7",
+      version: "0.1.8",
     },
     {
       instructions: mcpAgentInstructions,
@@ -1294,7 +1294,7 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
         JSON.stringify({
           status: "ok",
           service: "autodocbot-v2",
-          version: "0.1.7",
+          version: "0.1.8",
           authMode: config.authMode,
         }),
       );
